@@ -15,3 +15,7 @@ __pycache__/
 
 # Private reference statements for local parser runs
 test_pdfs/
+
+# Frontend build artefacts
+frontend/node_modules/
+frontend/dist/

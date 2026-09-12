@@ -17,3 +17,19 @@ still pass:
 
 The API uses `data/finance.db` (git-ignored) and creates it on first start.
 Uploaded PDFs are only ever written to a temporary file and deleted after parsing.
+
+## Development (API + frontend)
+
+Terminal 1:
+
+    source .venv/bin/activate
+    uvicorn api:app --reload
+
+Terminal 2:
+
+    cd frontend
+    npm install
+    npm run dev
+
+Open http://localhost:5173. The frontend talks to http://127.0.0.1:8000 by default
+(`VITE_API_BASE` overrides it). `npm test` runs the frontend tests; `npm run build` builds to `frontend/dist/`.
