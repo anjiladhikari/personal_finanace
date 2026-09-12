@@ -1,0 +1,14 @@
+# Private financial data — never commit
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.pdf
+data/
+
+# Python
+__pycache__/
+.pytest_cache/
+.venv/
