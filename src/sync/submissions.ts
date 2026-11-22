@@ -1,5 +1,5 @@
 import { dataScopeOf, getAppSettings, isSetupComplete, type AppSettings } from '@/db/appSettings';
-import { notifySubmissionsChanged } from '@/db/changes';
+import { notifySettingsChanged, notifySubmissionsChanged } from '@/db/changes';
 import { confirmedExpenseExists } from '@/db/confirmedExpenses';
 import {
   confirmSubmission,
@@ -15,7 +15,7 @@ import {
 } from '@/db/pendingSubmissions';
 import type { SqlDatabase } from '@/db/sql';
 import type { DataScope, ExpensePayload, SubmissionErrorCode, SubmissionState } from '@/domain/expense';
-import { a1Range, HEADER_RANGE_COLUMNS, inspectExpensesTab, PROBE_RANGE_COLUMNS } from '@/domain/sheetContract';
+import { a1Range, HEADER_RANGE_COLUMNS } from '@/domain/sheetContract';
 import { parseSheetRow, toSheetRow } from '@/domain/sheetRow';
 import {
   ATTEMPT_TIMEOUT_MS,
@@ -25,12 +25,12 @@ import {
   settledAt,
 } from '@/domain/submissionPolicy';
 import { AuthorizationError, type GoogleAuthorizer } from '@/google/authorization';
-import { getDriveFile } from '@/google/drive';
 import { GoogleApiError, type FetchLike } from '@/google/http';
-import { fetchIdentity } from '@/google/identity';
-import { hasDriveFileAccess, REQUIRED_SCOPES } from '@/google/scopes';
-import { GoogleSession, ReconnectRequiredError } from '@/google/session';
-import { appendRow, getTabs, getValues } from '@/google/sheets';
+import { ReconnectRequiredError } from '@/google/session';
+import { appendRow, getValues } from '@/google/sheets';
+
+import { runRefresh, type RefreshFailureCode, type RefreshOutcome, type RefreshProgress } from './refresh';
+import { accessFailure, err, openSheetAccess, type SheetAccess } from './sheetAccess';
 
 export type RunTrigger = 'save' | 'startup' | 'foreground' | 'connectivity' | 'manual' | 'timer';
 
@@ -42,7 +42,14 @@ export interface SubmissionDeps {
   readonly newId: () => string;
   /** Epoch milliseconds. */
   readonly now: () => number;
+  /** Rows per refresh read request (tests use small chunks). */
+  readonly refreshChunkRows?: number;
 }
+
+export type SyncStatus =
+  | { readonly kind: 'idle' }
+  | { readonly kind: 'refreshing'; readonly progress: RefreshProgress | null }
+  | { readonly kind: 'failed'; readonly code: RefreshFailureCode };
 
 export type SaveOutcome =
   | { readonly kind: 'confirmed'; readonly submissionId: string }
@@ -57,52 +64,14 @@ export type SaveOutcome =
   /** Nothing was stored; the draft must be kept. */
   | { readonly kind: 'not_saved'; readonly reason: 'not_set_up' | 'storage_failed' };
 
-type Preflight =
-  | { readonly kind: 'ready'; readonly session: GoogleSession; readonly tabTitle: string }
-  /** Needs the user (reconnect, fix the sheet). */
-  | { readonly kind: 'blocked'; readonly error: SubmissionError }
-  /** Temporary (offline, server, rate limit): try again later. */
-  | { readonly kind: 'retry_later'; readonly error: SubmissionError };
-
 type SendFailure = { readonly to: SubmissionState; readonly error: SubmissionError; readonly stopRun: boolean };
 
 const BACKOFF_RESET_TRIGGERS: ReadonlySet<RunTrigger> = new Set(['startup', 'foreground', 'connectivity', 'manual']);
-const MISSING_FILE_REASONS = new Set(['appNotAuthorizedToFile', 'insufficientFilePermissions', 'notFound']);
 const RECONNECT_REASONS = new Set(['insufficientPermissions', 'insufficientScopes', 'authError']);
 const ID_COLUMN = 4;
 
-const err = (code: SubmissionErrorCode, httpStatus: number | null = null): SubmissionError => ({ code, httpStatus });
-
 function iso(ms: number): string {
   return new Date(ms).toISOString();
-}
-
-/** Errors before any append was sent: nothing can have been written. */
-function preflightFailure(error: unknown): Preflight {
-  if (error instanceof ReconnectRequiredError) return { kind: 'blocked', error: err('auth_required') };
-  if (error instanceof AuthorizationError) {
-    return error.kind === 'network'
-      ? { kind: 'retry_later', error: err('offline') }
-      : error.kind === 'failed'
-        ? { kind: 'retry_later', error: err('server_error') }
-        : { kind: 'blocked', error: err('auth_required') };
-  }
-  if (error instanceof GoogleApiError) {
-    const status = error.status;
-    if (error.kind === 'network') return { kind: 'retry_later', error: err('offline') };
-    if (error.kind === 'timeout') return { kind: 'retry_later', error: err('timeout') };
-    if (error.kind === 'rate_limited') return { kind: 'retry_later', error: err('rate_limited', status) };
-    if (error.kind === 'unauthorized') return { kind: 'blocked', error: err('auth_required', status) };
-    if (error.kind === 'not_found') return { kind: 'blocked', error: err('sheet_missing', status) };
-    if (error.kind === 'forbidden') {
-      if (error.reason !== null && MISSING_FILE_REASONS.has(error.reason)) {
-        return { kind: 'blocked', error: err('sheet_missing', status) };
-      }
-      return { kind: 'blocked', error: err('auth_required', status) };
-    }
-    if (error.kind === 'bad_request') return { kind: 'blocked', error: err('invalid_request', status) };
-  }
-  return { kind: 'retry_later', error: err('server_error') };
 }
 
 /**
@@ -157,8 +126,53 @@ export class SubmissionEngine {
   private rateLimitedUntil = 0;
   /** Written to Sheets in this process, but the local update failed. */
   private readonly remoteOnly = new Set<string>();
+  private syncStatus: SyncStatus = { kind: 'idle' };
+  private readonly syncListeners = new Set<(status: SyncStatus) => void>();
+  private refreshInFlight: Promise<RefreshOutcome> | null = null;
 
   constructor(private readonly deps: SubmissionDeps) {}
+
+  getSyncStatus(): SyncStatus {
+    return this.syncStatus;
+  }
+
+  onSyncStatus(listener: (status: SyncStatus) => void): () => void {
+    this.syncListeners.add(listener);
+    return () => {
+      this.syncListeners.delete(listener);
+    };
+  }
+
+  private setSyncStatus(status: SyncStatus): void {
+    this.syncStatus = status;
+    for (const listener of [...this.syncListeners]) listener(status);
+  }
+
+  /**
+   * Rebuilds the confirmed cache from the sheet. It runs in the same queue as
+   * submissions, so a refresh never interleaves with a send: a submission
+   * confirmed before the refresh starts is in the sheet it reads, and one that
+   * starts later commits after it. Concurrent calls share one refresh.
+   */
+  refresh(): Promise<RefreshOutcome> {
+    if (this.refreshInFlight !== null) return this.refreshInFlight;
+    this.setSyncStatus({ kind: 'refreshing', progress: null });
+    const run = this.serialize(async (): Promise<RefreshOutcome> => {
+      try {
+        return await runRefresh(this.deps, (progress) => this.setSyncStatus({ kind: 'refreshing', progress }));
+      } catch {
+        return { kind: 'failed', code: 'server_error' };
+      }
+    }).then((outcome) => {
+      this.refreshInFlight = null;
+      this.setSyncStatus(outcome.kind === 'failed' ? { kind: 'failed', code: outcome.code } : { kind: 'idle' });
+      notifySubmissionsChanged();
+      if (outcome.kind === 'refreshed') notifySettingsChanged(); // last refresh time
+      return outcome;
+    });
+    this.refreshInFlight = run;
+    return run;
+  }
 
   /** Called after every run with the time the next timed run is due (or null). */
   setScheduleListener(listener: ((nextRunAt: number | null) => void) | null): void {
@@ -263,7 +277,7 @@ export class SubmissionEngine {
       return null; // the connectivity trigger resumes
     }
 
-    const preflight = await this.preflight(settings, scope);
+    const preflight = await openSheetAccess(this.deps, settings, scope);
     if (preflight.kind !== 'ready') {
       for (const item of items) {
         if (item.state === 'pending' && preflight.kind === 'blocked') {
@@ -287,40 +301,6 @@ export class SubmissionEngine {
     return this.nextRunAt(await listPendingSubmissions(db, scope));
   }
 
-  private async preflight(settings: AppSettings, scope: DataScope): Promise<Preflight> {
-    try {
-      const outcome = await this.deps.authorizer.authorize({
-        scopes: REQUIRED_SCOPES,
-        accountEmail: settings.googleAccountEmail,
-        interactive: false,
-        selectAccount: false,
-      });
-      if (outcome.type !== 'success' || !hasDriveFileAccess(outcome.grantedScopes)) {
-        return { kind: 'blocked', error: err('auth_required') };
-      }
-      const session = new GoogleSession(this.deps, outcome.accessToken, settings.googleAccountEmail);
-
-      // Never write with a token for any account other than the one the expenses belong to.
-      const identity = await fetchIdentity(session);
-      if (identity.accountId !== scope.accountId) return { kind: 'blocked', error: err('account_mismatch') };
-
-      const file = await getDriveFile(session, scope.spreadsheetId);
-      if (file.trashed) return { kind: 'blocked', error: err('sheet_trashed') };
-
-      const tab = (await getTabs(session, scope.spreadsheetId)).find((t) => t.sheetId === settings.expensesSheetId);
-      if (tab === undefined) return { kind: 'blocked', error: err('sheet_structure_changed') };
-
-      // Validate the header before writing so columns can never be misaligned.
-      const probe = await getValues(session, scope.spreadsheetId, a1Range(tab.title, PROBE_RANGE_COLUMNS));
-      if (inspectExpensesTab(probe).kind !== 'ready') {
-        return { kind: 'blocked', error: err('sheet_structure_changed') };
-      }
-      return { kind: 'ready', session, tabTitle: tab.title };
-    } catch (error) {
-      return preflightFailure(error);
-    }
-  }
-
   /**
    * Looks up every uncertain submission's Expense ID in the sheet. Found →
    * confirmed from the remote record. Absent → still uncertain until the
@@ -328,7 +308,7 @@ export class SubmissionEngine {
    * Returns the IDs that may be re-sent now, or null if the read failed.
    */
   private async reconcile(
-    ready: Extract<Preflight, { kind: 'ready' }>,
+    ready: Extract<SheetAccess, { kind: 'ready' }>,
     settings: AppSettings,
     scope: DataScope,
     items: readonly PendingSubmission[],
@@ -339,11 +319,11 @@ export class SubmissionEngine {
 
     let rows: unknown[][];
     try {
-      rows = await getValues(ready.session, scope.spreadsheetId, a1Range(ready.tabTitle, 'A2:E'));
+      rows = await getValues(ready.session, scope.spreadsheetId, a1Range(ready.tab.title, 'A2:E'));
     } catch (error) {
-      const failure = preflightFailure(error);
+      const failure = accessFailure(error);
       for (const item of uncertain) {
-        await transitionSubmission(this.deps.db, item.submissionId, 'uncertain', 'uncertain', failure.kind === 'ready' ? null : failure.error);
+        await transitionSubmission(this.deps.db, item.submissionId, 'uncertain', 'uncertain', failure.error);
       }
       return null;
     }
@@ -366,7 +346,7 @@ export class SubmissionEngine {
   }
 
   private async send(
-    ready: Extract<Preflight, { kind: 'ready' }>,
+    ready: Extract<SheetAccess, { kind: 'ready' }>,
     settings: AppSettings,
     scope: DataScope,
     item: PendingSubmission,
@@ -379,7 +359,7 @@ export class SubmissionEngine {
       await appendRow(
         ready.session,
         scope.spreadsheetId,
-        a1Range(ready.tabTitle, HEADER_RANGE_COLUMNS),
+        a1Range(ready.tab.title, HEADER_RANGE_COLUMNS),
         toSheetRow(item.submissionId, item, settings.currency.minorUnits),
         ATTEMPT_TIMEOUT_MS,
       );

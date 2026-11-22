@@ -30,20 +30,50 @@ function dateFromCell(cell: unknown): LocalDate | null {
   return null;
 }
 
+export type RowProblem = 'missing_id' | 'invalid_date' | 'invalid_amount' | 'missing_category';
+
+export type RowInspection =
+  | { readonly kind: 'empty' }
+  | { readonly kind: 'valid'; readonly expense: ExpensePayload & { readonly expenseId: string } }
+  | { readonly kind: 'invalid'; readonly problem: RowProblem; readonly expenseId: string | null };
+
+function isBlank(cell: unknown): boolean {
+  return cell === undefined || cell === null || String(cell).trim() === '';
+}
+
+/**
+ * Checks one Expenses row (Date | Description | Amount | Category | Expense ID).
+ * Problems are reported in that order of importance: ID, date, amount, category.
+ * The description may be empty.
+ */
+export function inspectSheetRow(row: readonly unknown[], minorUnits: number): RowInspection {
+  const cells = row.slice(0, 5);
+  if (cells.every(isBlank)) return { kind: 'empty' };
+  const [dateCell, descriptionCell, amountCell, categoryCell, idCell] = cells;
+
+  const expenseId = isBlank(idCell) ? null : String(idCell).trim();
+  if (expenseId === null) return { kind: 'invalid', problem: 'missing_id', expenseId: null };
+
+  const purchaseDate = dateFromCell(dateCell);
+  if (purchaseDate === null) return { kind: 'invalid', problem: 'invalid_date', expenseId };
+
+  const amountText =
+    typeof amountCell === 'number' ? String(amountCell) : typeof amountCell === 'string' ? amountCell : '';
+  const amount = parseAmount(amountText, minorUnits);
+  if (!amount.ok) return { kind: 'invalid', problem: 'invalid_amount', expenseId };
+
+  const category = isBlank(categoryCell) ? '' : String(categoryCell).trim();
+  if (category === '') return { kind: 'invalid', problem: 'missing_category', expenseId };
+
+  const description = isBlank(descriptionCell) ? '' : String(descriptionCell).trim();
+  return { kind: 'valid', expense: { expenseId, purchaseDate, description, amountMinor: amount.amountMinor, category } };
+}
+
 /**
  * Reads an Expenses row back into a payload (used to rebuild local state from
  * the remote record). Returns null if the row is not a valid expense.
  */
 export function parseSheetRow(row: readonly unknown[], minorUnits: number): (ExpensePayload & { expenseId: string }) | null {
-  const [dateCell, descriptionCell, amountCell, categoryCell, idCell] = row;
-  const purchaseDate = dateFromCell(dateCell);
-  const description = typeof descriptionCell === 'string' ? descriptionCell : String(descriptionCell ?? '');
-  const category = typeof categoryCell === 'string' ? categoryCell.trim() : '';
-  const expenseId = typeof idCell === 'string' ? idCell.trim() : '';
-  const amountText =
-    typeof amountCell === 'number' ? String(amountCell) : typeof amountCell === 'string' ? amountCell : '';
-  const amount = parseAmount(amountText, minorUnits);
-
-  if (purchaseDate === null || !amount.ok || category === '' || expenseId === '') return null;
-  return { expenseId, purchaseDate, description, amountMinor: amount.amountMinor, category };
+  const inspection = inspectSheetRow(row, minorUnits);
+  return inspection.kind === 'valid' ? inspection.expense : null;
 }

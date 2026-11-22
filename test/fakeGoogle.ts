@@ -29,6 +29,8 @@ export interface FakeFile {
   appProperties: Record<string, string>;
   createdTime: string;
   modifiedTime: string;
+  /** Drive file version; increases with every change. */
+  version: number;
   tabs: FakeTab[];
   nextSheetId: number;
 }
@@ -94,6 +96,8 @@ export class FakeGoogle {
   readonly log: LoggedRequest[] = [];
   /** Simulates Drive ignoring appProperties in files.create. */
   dropAppPropertiesOnCreate = false;
+  /** Called for every request before it is handled (e.g. to edit the sheet mid-refresh). */
+  beforeRequest: ((request: LoggedRequest) => void) | null = null;
 
   private readonly grants = new Map<string, Set<string>>();
   private readonly tokens = new Map<string, TokenRecord>();
@@ -184,6 +188,7 @@ export class FakeGoogle {
       appProperties: { ...appProperties },
       createdTime: stamp,
       modifiedTime: stamp,
+      version: 1,
       tabs: [{ sheetId: 0, title: 'Sheet1', index: 0, frozenRowCount: 0, rows: [] }],
       nextSheetId: 1_000,
     };
@@ -194,6 +199,16 @@ export class FakeGoogle {
   private touch(file: FakeFile): void {
     this.now += 1_000;
     file.modifiedTime = new Date(this.now).toISOString();
+    file.version += 1;
+  }
+
+  /** The user edits the sheet in Google Sheets (bumps the file version). */
+  userEdit(fileId: string, edit: (rows: unknown[][], file: FakeFile) => void, sheetId = 0): void {
+    const file = this.files.get(fileId);
+    const tab = file?.tabs.find((t) => t.sheetId === sheetId);
+    if (file === undefined || tab === undefined) throw new Error('no such file/tab');
+    edit(tab.rows, file);
+    this.touch(file);
   }
 
   private driveJson(file: FakeFile) {
@@ -204,6 +219,7 @@ export class FakeGoogle {
       trashed: file.trashed,
       createdTime: file.createdTime,
       modifiedTime: file.modifiedTime,
+      version: String(file.version),
       appProperties: { ...file.appProperties },
     };
   }
@@ -211,7 +227,9 @@ export class FakeGoogle {
   readonly fetch: FetchLike = async (url, init) => {
     const parsed = new URL(url);
     const body: unknown = init.body === undefined ? undefined : JSON.parse(init.body);
-    this.log.push({ method: init.method, path: parsed.pathname, body });
+    const logged = { method: init.method, path: parsed.pathname, body };
+    this.log.push(logged);
+    this.beforeRequest?.(logged);
 
     const failure = this.failures.find(
       (f) => f.remaining > 0 && parsed.pathname.includes(f.pathIncludes) && (f.method === undefined || f.method === init.method),
@@ -347,7 +365,15 @@ export class FakeGoogle {
 
     // spreadsheets.get
     return respond(200, {
-      sheets: file.tabs.map((t) => ({ properties: { sheetId: t.sheetId, title: t.title, index: t.index } })),
+      sheets: file.tabs.map((t) => ({
+        properties: {
+          sheetId: t.sheetId,
+          title: t.title,
+          index: t.index,
+          // Like Sheets: a new grid has 1000 rows and grows as rows are added.
+          gridProperties: { rowCount: Math.max(1000, t.rows.length) },
+        },
+      })),
     });
   }
 

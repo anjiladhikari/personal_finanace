@@ -42,6 +42,7 @@ describe('migrateDatabase', () => {
       'pending_submissions_scope_date',
       'pending_submissions_spreadsheet_same_account',
       'pending_submissions_state',
+      'sheet_issues',
     ]);
   });
 

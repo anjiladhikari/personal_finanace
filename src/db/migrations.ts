@@ -131,6 +131,24 @@ export const MIGRATIONS: readonly Migration[] = [
        END`,
     ],
   },
+  {
+    version: 3,
+    name: 'sheet_issues',
+    statements: [
+      // Rows from the last successful refresh that need the user's attention.
+      // Only the row number, issue kind and Expense ID are kept, never cell text.
+      `CREATE TABLE IF NOT EXISTS sheet_issues (
+        account_id TEXT NOT NULL CHECK (length(account_id) > 0),
+        spreadsheet_id TEXT NOT NULL CHECK (length(spreadsheet_id) > 0),
+        row_number INTEGER NOT NULL CHECK (row_number >= 2),
+        kind TEXT NOT NULL CHECK (kind IN (
+          'missing_id', 'invalid_date', 'invalid_amount', 'missing_category',
+          'conflicting_duplicate', 'duplicate_resolved')),
+        expense_id TEXT,
+        PRIMARY KEY (account_id, spreadsheet_id, row_number)
+      ) STRICT`,
+    ],
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;

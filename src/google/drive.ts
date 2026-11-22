@@ -11,7 +11,7 @@ import type { GoogleSession } from './session';
 
 export const DRIVE_FILES_URL = 'https://www.googleapis.com/drive/v3/files';
 
-const FILE_FIELDS = 'id,name,mimeType,trashed,createdTime,modifiedTime,appProperties';
+const FILE_FIELDS = 'id,name,mimeType,trashed,createdTime,modifiedTime,version,appProperties';
 
 export interface DriveFile {
   readonly id: string;
@@ -20,6 +20,8 @@ export interface DriveFile {
   readonly trashed: boolean;
   readonly createdTime: string | null;
   readonly modifiedTime: string | null;
+  /** Drive's monotonically increasing file version; changes with every edit. */
+  readonly version: string | null;
   readonly appProperties: Readonly<Record<string, string>>;
 }
 
@@ -43,6 +45,7 @@ function toDriveFile(raw: unknown): DriveFile {
     trashed: file.trashed === true,
     createdTime: typeof file.createdTime === 'string' ? file.createdTime : null,
     modifiedTime: typeof file.modifiedTime === 'string' ? file.modifiedTime : null,
+    version: typeof file.version === 'string' || typeof file.version === 'number' ? String(file.version) : null,
     appProperties: props,
   };
 }

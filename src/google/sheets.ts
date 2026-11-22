@@ -9,18 +9,29 @@ function spreadsheetUrl(spreadsheetId: string): string {
   return `${SHEETS_URL}/${encodeURIComponent(spreadsheetId)}`;
 }
 
-export async function getTabs(session: GoogleSession, spreadsheetId: string): Promise<SheetTab[]> {
-  const fields = encodeURIComponent('sheets.properties(sheetId,title,index)');
+export interface TabWithSize extends SheetTab {
+  /** Number of rows in the tab's grid (an upper bound for data rows). */
+  readonly rowCount: number | null;
+}
+
+export async function getTabs(session: GoogleSession, spreadsheetId: string): Promise<TabWithSize[]> {
+  const fields = encodeURIComponent('sheets.properties(sheetId,title,index,gridProperties.rowCount)');
   const result = await session.request<{ sheets?: { properties?: Record<string, unknown> }[] }>({
     method: 'GET',
     url: `${spreadsheetUrl(spreadsheetId)}?fields=${fields}`,
   });
   return (result.sheets ?? []).map(({ properties = {} }) => {
-    const { sheetId, title, index } = properties;
+    const { sheetId, title, index, gridProperties } = properties;
     if (typeof sheetId !== 'number' || typeof title !== 'string') {
       throw new GoogleApiError('invalid_response', 200, null);
     }
-    return { sheetId, title, index: typeof index === 'number' ? index : 0 };
+    const rowCount = (gridProperties as { rowCount?: unknown } | undefined)?.rowCount;
+    return {
+      sheetId,
+      title,
+      index: typeof index === 'number' ? index : 0,
+      rowCount: typeof rowCount === 'number' && Number.isInteger(rowCount) && rowCount >= 0 ? rowCount : null,
+    };
   });
 }
 
