@@ -96,6 +96,41 @@ export const MIGRATIONS: readonly Migration[] = [
        END`,
     ],
   },
+  {
+    version: 2,
+    name: 'google_account_binding',
+    statements: [
+      // Email is kept only as the account hint for Google's authorization
+      // request and for display. The identity key stays google_account_id.
+      `ALTER TABLE app_settings ADD COLUMN google_account_email TEXT
+         CHECK (google_account_email IS NULL OR length(google_account_email) > 0)`,
+      // Pending rows may move to a replacement spreadsheet (e.g. the old file
+      // was deleted), but only within the bound account, and never to
+      // another account. Everything else in the payload stays immutable.
+      `DROP TRIGGER IF EXISTS pending_submissions_payload_immutable`,
+      `CREATE TRIGGER pending_submissions_payload_immutable
+       BEFORE UPDATE ON pending_submissions
+       FOR EACH ROW
+       WHEN NEW.submission_id IS NOT OLD.submission_id
+         OR NEW.account_id IS NOT OLD.account_id
+         OR NEW.purchase_date IS NOT OLD.purchase_date
+         OR NEW.description IS NOT OLD.description
+         OR NEW.amount_minor IS NOT OLD.amount_minor
+         OR NEW.category IS NOT OLD.category
+         OR NEW.created_at IS NOT OLD.created_at
+       BEGIN
+         SELECT RAISE(ABORT, 'pending submission payload is immutable');
+       END`,
+      `CREATE TRIGGER pending_submissions_spreadsheet_same_account
+       BEFORE UPDATE OF spreadsheet_id ON pending_submissions
+       FOR EACH ROW
+       WHEN NEW.spreadsheet_id IS NOT OLD.spreadsheet_id
+         AND OLD.account_id IS NOT (SELECT google_account_id FROM app_settings WHERE id = 1)
+       BEGIN
+         SELECT RAISE(ABORT, 'pending submissions can only move within the bound Google account');
+       END`,
+    ],
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;

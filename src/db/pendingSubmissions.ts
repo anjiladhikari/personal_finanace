@@ -117,6 +117,15 @@ export async function getPendingSubmission(
   return row === null ? null : toPendingSubmission(row);
 }
 
+/** Number of unsent expenses owned by a Google account (any spreadsheet). */
+export async function countPendingSubmissions(db: SqlDatabase, accountId: string): Promise<number> {
+  const row = await db.getFirst<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM pending_submissions WHERE account_id = ?',
+    [accountId],
+  );
+  return row?.n ?? 0;
+}
+
 /** Pending submissions for one scope, oldest first (the send order). */
 export async function listPendingSubmissions(
   db: SqlDatabase,

@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.expenses'
+version = '1.0.0'
+
+android {
+  namespace "dev.expenses.googleauthorization"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
+}
+
+dependencies {
+  // Google Identity Services AuthorizationClient. 22.0.0 removed the legacy
+  // GoogleSignIn APIs; only AuthorizationClient is used here.
+  implementation "com.google.android.gms:play-services-auth:22.0.0"
+}
