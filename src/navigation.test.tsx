@@ -24,6 +24,15 @@ jest.mock('@/db/DatabaseProvider', () => {
 let mockServices: GoogleServices | null = null;
 jest.mock('@/google/services', () => ({ createDefaultGoogleServices: () => mockServices }));
 
+jest.mock('@/sync/platform', () => ({
+  createPlatformServices: () => ({
+    isOnline: async () => true,
+    onConnectivityRegained: () => () => undefined,
+    newId: () => 'test-id',
+    now: () => Date.now(),
+  }),
+}));
+
 const ALICE = 'sub-alice';
 let testDb: TestDatabase;
 let google: FakeGoogle;
@@ -109,7 +118,7 @@ describe('after setup', () => {
 
     expect(await screen.findByTestId('add-expense-screen')).toBeOnTheScreen();
     expect(router.getPathname()).toBe('/');
-    expect(await screen.findByText('Amounts are in AUD.')).toBeOnTheScreen();
+    expect(await screen.findByLabelText('Amount in AUD')).toBeOnTheScreen();
     expect(google.log).toHaveLength(0);
     expect(authorizer.calls).toHaveLength(0);
     expect(globalFetch).not.toHaveBeenCalled();

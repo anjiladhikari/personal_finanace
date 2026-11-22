@@ -80,3 +80,38 @@ export async function batchUpdate(
     body: { requests },
   });
 }
+
+export interface AppendResult {
+  /** A1 range Google wrote to, e.g. "'Expenses'!A7:E7". */
+  readonly updatedRange: string | null;
+  readonly updatedRows: number;
+}
+
+/**
+ * Appends one row after the table that starts at `tableRange` (the header).
+ * RAW keeps text literal (no formulas, no date/number guessing); INSERT_ROWS
+ * inserts new rows so nothing below is overwritten.
+ */
+export async function appendRow(
+  session: GoogleSession,
+  spreadsheetId: string,
+  tableRange: string,
+  row: readonly (string | number)[],
+  timeoutMs: number,
+): Promise<AppendResult> {
+  const params = new URLSearchParams({
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    includeValuesInResponse: 'false',
+  });
+  const result = await session.request<{ updates?: { updatedRange?: unknown; updatedRows?: unknown } }>({
+    method: 'POST',
+    url: `${spreadsheetUrl(spreadsheetId)}/values/${encodeURIComponent(tableRange)}:append?${params.toString()}`,
+    body: { range: tableRange, majorDimension: 'ROWS', values: [row] },
+    timeoutMs,
+  });
+  return {
+    updatedRange: typeof result.updates?.updatedRange === 'string' ? result.updates.updatedRange : null,
+    updatedRows: typeof result.updates?.updatedRows === 'number' ? result.updates.updatedRows : 0,
+  };
+}

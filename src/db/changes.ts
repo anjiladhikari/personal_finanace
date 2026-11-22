@@ -1,16 +1,28 @@
-/** Minimal in-process notification so screens re-read settings after setup. */
+/** Minimal in-process notifications so screens re-read local data. */
 
 type Listener = () => void;
 
-const settingsListeners = new Set<Listener>();
-
-export function onSettingsChanged(listener: Listener): () => void {
-  settingsListeners.add(listener);
-  return () => {
-    settingsListeners.delete(listener);
+function channel() {
+  const listeners = new Set<Listener>();
+  return {
+    subscribe(listener: Listener): () => void {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    notify(): void {
+      for (const listener of [...listeners]) listener();
+    },
   };
 }
 
-export function notifySettingsChanged(): void {
-  for (const listener of [...settingsListeners]) listener();
-}
+const settings = channel();
+const submissions = channel();
+
+export const onSettingsChanged = settings.subscribe;
+export const notifySettingsChanged = settings.notify;
+
+/** Pending/confirmed submissions changed (saved, sent, confirmed, failed). */
+export const onSubmissionsChanged = submissions.subscribe;
+export const notifySubmissionsChanged = submissions.notify;

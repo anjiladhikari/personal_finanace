@@ -33,7 +33,14 @@ export interface FakeFile {
   nextSheetId: number;
 }
 
-type FailureResponse = { status: number; reason?: string } | 'network' | 'timeout' | 'network_after_commit';
+type FailureResponse =
+  | { status: number; reason?: string }
+  | 'network'
+  | 'timeout'
+  /** The server applies the request, but the client sees a dropped connection. */
+  | 'network_after_commit'
+  /** The client times out; the request is applied later, on flushDeferredWrites(). */
+  | 'deferred_commit';
 
 interface Failure {
   method?: string;
@@ -69,14 +76,14 @@ function columnIndex(letters: string): number {
 }
 
 function parseRange(range: string): { title: string; r0: number; c0: number; r1: number; c1: number } {
-  const match = /^'((?:[^']|'')*)'!([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(range);
+  const match = /^'((?:[^']|'')*)'!([A-Z]+)(\d+):([A-Z]+)(\d*)$/.exec(range);
   if (!match) throw new Error(`Fake Sheets cannot parse range ${range}`);
-  const [, title = '', ca = 'A', ra = '1', cb = 'A', rb = '1'] = match;
+  const [, title = '', ca = 'A', ra = '1', cb = 'A', rb = ''] = match;
   return {
     title: title.replaceAll("''", "'"),
     r0: Number(ra) - 1,
     c0: columnIndex(ca),
-    r1: Number(rb) - 1,
+    r1: rb === '' ? Number.MAX_SAFE_INTEGER : Number(rb) - 1,
     c1: columnIndex(cb),
   };
 }
@@ -91,6 +98,7 @@ export class FakeGoogle {
   private readonly grants = new Map<string, Set<string>>();
   private readonly tokens = new Map<string, TokenRecord>();
   private failures: Failure[] = [];
+  private deferred: (() => Promise<unknown>)[] = [];
   private counter = 0;
   private now = Date.parse('2026-11-22T00:00:00Z');
 
@@ -125,6 +133,19 @@ export class FakeGoogle {
     const token = `fake-token-${this.counter}`;
     this.tokens.set(token, { sub, scopes: [...scopes], valid: true });
     return token;
+  }
+
+  /** Applies requests that timed out on the client but reach the server late. */
+  async flushDeferredWrites(): Promise<void> {
+    const pending = this.deferred;
+    this.deferred = [];
+    for (const write of pending) await write();
+  }
+
+  /** Data rows (below the header) of a file's tab. */
+  dataRows(fileId: string, sheetId = 0): unknown[][] {
+    const tab = this.files.get(fileId)?.tabs.find((t) => t.sheetId === sheetId);
+    return (tab?.rows ?? []).slice(1).filter((row) => row.some((cell) => cell !== undefined && cell !== ''));
   }
 
   failNext(failure: { method?: string; pathIncludes: string; times?: number; response: FailureResponse }): void {
@@ -200,6 +221,10 @@ export class FakeGoogle {
       const { response } = failure;
       if (response === 'network') throw new TypeError('Network request failed');
       if (response === 'timeout') return this.hang(init);
+      if (response === 'deferred_commit') {
+        this.deferred.push(() => this.route(parsed, init, body));
+        return this.hang(init);
+      }
       if (response !== 'network_after_commit') {
         return respond(response.status, errorBody(response.status, response.reason ?? 'backendError'));
       }
@@ -290,6 +315,10 @@ export class FakeGoogle {
 
     if (batch && init.method === 'POST') return this.batchUpdate(file, body);
 
+    if (tail[0] === 'values' && tail[1] !== undefined && tail[1].endsWith(':append') && init.method === 'POST') {
+      return this.append(file, decodeURIComponent(tail[1].slice(0, -':append'.length)), url, body);
+    }
+
     if (tail[0] === 'values' && tail[1] !== undefined) {
       const range = parseRange(decodeURIComponent(tail[1]));
       const tab = file.tabs.find((t) => t.title === range.title);
@@ -306,7 +335,8 @@ export class FakeGoogle {
         return respond(200, { updatedRange: decodeURIComponent(tail[1]) });
       }
       const slice: unknown[][] = [];
-      for (let r = range.r0; r <= range.r1; r += 1) {
+      const lastRow = Math.min(range.r1, tab.rows.length - 1);
+      for (let r = range.r0; r <= lastRow; r += 1) {
         const row = (tab.rows[r] ?? []).slice(range.c0, range.c1 + 1).map((cell) => cell ?? '');
         while (row.length > 0 && row[row.length - 1] === '') row.pop();
         slice.push(row);
@@ -318,6 +348,27 @@ export class FakeGoogle {
     // spreadsheets.get
     return respond(200, {
       sheets: file.tabs.map((t) => ({ properties: { sheetId: t.sheetId, title: t.title, index: t.index } })),
+    });
+  }
+
+  /** values.append: writes after the last non-empty row of the table. */
+  private append(file: FakeFile, rangeText: string, url: URL, body: unknown): ResponseLike {
+    const range = parseRange(rangeText);
+    const tab = file.tabs.find((t) => t.title === range.title);
+    if (tab === undefined) return respond(400, errorBody(400, 'badRequest'));
+    if (url.searchParams.get('valueInputOption') !== 'RAW') return respond(400, errorBody(400, 'badRequest'));
+    const values = ((body ?? {}) as { values?: unknown[][] }).values ?? [];
+    let last = tab.rows.length - 1;
+    while (last >= 0 && !(tab.rows[last] ?? []).some((cell) => cell !== undefined && cell !== '')) last -= 1;
+    const start = last + 1;
+    values.forEach((row, i) => {
+      tab.rows[start + i] = [...row];
+    });
+    this.touch(file);
+    const quoted = `'${tab.title.replaceAll("'", "''")}'`;
+    return respond(200, {
+      spreadsheetId: file.id,
+      updates: { updatedRange: `${quoted}!A${start + 1}:E${start + values.length}`, updatedRows: values.length },
     });
   }
 

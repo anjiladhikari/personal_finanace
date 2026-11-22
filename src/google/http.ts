@@ -7,6 +7,7 @@
 export interface ResponseLike {
   readonly ok: boolean;
   readonly status: number;
+  readonly headers?: { get(name: string): string | null };
   text(): Promise<string>;
 }
 
@@ -35,14 +36,28 @@ export class GoogleApiError extends Error {
   readonly status: number | null;
   /** Google's error reason, e.g. "insufficientPermissions". Never personal data. */
   readonly reason: string | null;
+  /** From a Retry-After header (seconds), when Google sent one. */
+  readonly retryAfterMs: number | null;
 
-  constructor(kind: GoogleApiErrorKind, status: number | null, reason: string | null) {
+  constructor(
+    kind: GoogleApiErrorKind,
+    status: number | null,
+    reason: string | null,
+    retryAfterMs: number | null = null,
+  ) {
     super(`Google API error: ${kind}${status === null ? '' : ` (${status})`}`);
     this.name = 'GoogleApiError';
     this.kind = kind;
     this.status = status;
     this.reason = reason;
+    this.retryAfterMs = retryAfterMs;
   }
+}
+
+function retryAfterMsFrom(response: ResponseLike): number | null {
+  const raw = response.headers?.get('retry-after') ?? null;
+  if (raw === null || !/^\d{1,6}$/.test(raw.trim())) return null;
+  return Number(raw.trim()) * 1000;
 }
 
 export const DEFAULT_TIMEOUT_MS = 20_000;
@@ -112,7 +127,7 @@ export async function googleRequest<T>(
 
   if (!response.ok) {
     const reason = reasonFrom(text);
-    throw new GoogleApiError(kindForStatus(response.status, reason), response.status, reason);
+    throw new GoogleApiError(kindForStatus(response.status, reason), response.status, reason, retryAfterMsFrom(response));
   }
   if (text.trim() === '') return {} as T;
   try {

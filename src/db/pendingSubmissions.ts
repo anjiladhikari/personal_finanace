@@ -137,3 +137,90 @@ export async function listPendingSubmissions(
   ]);
   return rows.map(toPendingSubmission);
 }
+
+/**
+ * Starts a send attempt: pending → sending, persisted before the request is
+ * made, so a crash mid-request leaves evidence that a write may have happened.
+ */
+export async function markSending(db: SqlDatabase, submissionId: string, attemptAt: string): Promise<boolean> {
+  const result = await db.run(
+    `UPDATE pending_submissions
+     SET state = 'sending', last_attempt_at = ?, attempt_count = attempt_count + 1,
+         last_error_code = NULL, last_error_http_status = NULL
+     WHERE submission_id = ? AND state = 'pending'`,
+    [attemptAt, submissionId],
+  );
+  return result.changes === 1;
+}
+
+/** Moves a submission between states, only if it is currently in `from`. */
+export async function transitionSubmission(
+  db: SqlDatabase,
+  submissionId: string,
+  from: SubmissionState,
+  to: SubmissionState,
+  error: SubmissionError | null,
+): Promise<boolean> {
+  const result = await db.run(
+    `UPDATE pending_submissions
+     SET state = ?, last_error_code = ?, last_error_http_status = ?
+     WHERE submission_id = ? AND state = ?`,
+    [to, error?.code ?? null, error?.httpStatus ?? null, submissionId, from],
+  );
+  return result.changes === 1;
+}
+
+/**
+ * Submission attempts are serialized, so when a new run starts nothing is in
+ * flight: any 'sending' row is from an attempt that was interrupted (app
+ * killed, or the local update after a remote success failed).
+ */
+export async function markInterruptedAsUncertain(db: SqlDatabase): Promise<number> {
+  const result = await db.run(
+    "UPDATE pending_submissions SET state = 'uncertain' WHERE state = ?",
+    ['sending'],
+  );
+  return result.changes;
+}
+
+/** User asked to retry: actionable failures become pending again. */
+export async function unblockSubmissions(db: SqlDatabase, scope: DataScope): Promise<number> {
+  const result = await db.run(
+    `UPDATE pending_submissions
+     SET state = 'pending', last_error_code = NULL, last_error_http_status = NULL
+     WHERE state = 'blocked' AND account_id = ? AND spreadsheet_id = ?`,
+    [scope.accountId, scope.spreadsheetId],
+  );
+  return result.changes;
+}
+
+/**
+ * Completes a submission in one local transaction: the confirmed record is
+ * added (from the remote row when recovering) and the pending row removed.
+ */
+export async function confirmSubmission(
+  db: SqlDatabase,
+  scope: DataScope,
+  submissionId: string,
+  confirmed: ExpensePayload,
+): Promise<void> {
+  if (!isValidExpensePayload(confirmed)) throw new Error('Invalid confirmed expense');
+  await db.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO confirmed_expenses
+         (expense_id, account_id, spreadsheet_id, purchase_date, description, amount_minor, category)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (expense_id) DO NOTHING`,
+      [
+        submissionId,
+        scope.accountId,
+        scope.spreadsheetId,
+        confirmed.purchaseDate,
+        confirmed.description,
+        confirmed.amountMinor,
+        confirmed.category,
+      ],
+    );
+    await tx.run('DELETE FROM pending_submissions WHERE submission_id = ?', [submissionId]);
+  });
+}
