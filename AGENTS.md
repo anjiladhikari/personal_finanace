@@ -50,3 +50,7 @@ Docs: https://docs.expo.dev/eas/index.md
 - Schema changes go in a new entry at the end of `MIGRATIONS` in `src/db/migrations.ts`. Never edit a released migration.
 - No `console.*` outside `src/diagnostics/log.ts`. Diagnostics carry only numbers, booleans and fixed codes: no descriptions, amounts as text, emails, sheet IDs or tokens.
 - OAuth tokens are never written to SQLite or app storage; the Google authorization SDK owns them.
+- Google access goes through `src/google` (`GoogleSession` for every API call) and `src/sync/connection.ts` for setup. The native module in `modules/google-authorization` wraps Google Play services AuthorizationClient (Android only); never add the legacy GoogleSignIn APIs or a client secret.
+- The app finds its spreadsheet by the private Drive app property `expenseTrackerRole=expenses` and its tab by numeric sheetId, never by name. Validate the sheet (`inspectExpensesTab`) before writing; never overwrite existing rows.
+- Pending submissions belong to one Google account. They may move to a replacement spreadsheet of that account (`bindSpreadsheet`), never to another account; a database trigger enforces this.
+- Google setup and device acceptance checks: `docs/google-cloud-setup.md`.

@@ -40,7 +40,9 @@ describe('migrateDatabase', () => {
       'pending_submissions',
       'pending_submissions_payload_immutable',
       'pending_submissions_scope_date',
+      'pending_submissions_spreadsheet_same_account',
       'pending_submissions_state',
+      'sheet_issues',
     ]);
   });
 
@@ -50,6 +52,7 @@ describe('migrateDatabase', () => {
       schemaVersion: LATEST_SCHEMA_VERSION,
       currency: { code: 'AUD', minorUnits: 2 },
       googleAccountId: null,
+      googleAccountEmail: null,
       spreadsheetId: null,
       expensesSheetId: null,
       lastSuccessfulSyncAt: null,
@@ -148,5 +151,26 @@ describe('persistence across restart', () => {
       { submission_id: 'sub-1', amount_minor: 450 },
     ]);
     second.close();
+  });
+});
+
+describe('upgrading an existing v1 database', () => {
+  test('v2 keeps existing rows and settings and adds the account email column', async () => {
+    const v1Only = MIGRATIONS.filter((m) => m.version === 1);
+    await migrateDatabase(testDb.db, v1Only);
+    testDb.raw.prepare("UPDATE app_settings SET google_account_id = 'acct-1' WHERE id = 1").run();
+    testDb.raw
+      .prepare(
+        `INSERT INTO pending_submissions
+           (submission_id, account_id, spreadsheet_id, purchase_date, description, amount_minor, category, created_at)
+         VALUES ('sub-1', 'acct-1', 'sheet-1', '2026-11-22', 'Coffee', 450, 'Eating out', '2026-11-22T01:02:03.000Z')`,
+      )
+      .run();
+
+    const result = await migrateDatabase(testDb.db);
+
+    expect(result).toEqual({ fromVersion: 1, toVersion: LATEST_SCHEMA_VERSION, applied: LATEST_SCHEMA_VERSION - 1 });
+    expect(await getAppSettings(testDb.db)).toMatchObject({ googleAccountId: 'acct-1', googleAccountEmail: null });
+    expect(testDb.raw.prepare('SELECT submission_id FROM pending_submissions').all()).toEqual([{ submission_id: 'sub-1' }]);
   });
 });

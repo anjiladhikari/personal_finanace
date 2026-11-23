@@ -80,3 +80,35 @@ export async function listConfirmedExpenses(
   );
   return rows.map(toConfirmedExpense);
 }
+
+/**
+ * Total confirmed spending (minor units) for one scope and optional date
+ * range. Pending, sending, uncertain and blocked submissions are excluded.
+ */
+export async function sumConfirmedSpending(
+  db: SqlDatabase,
+  scope: DataScope,
+  range: DateRange | null,
+): Promise<number> {
+  const row = await db.getFirst<{ total: number | null }>(
+    `SELECT SUM(amount_minor) AS total
+     FROM confirmed_expenses
+     WHERE account_id = ? AND spreadsheet_id = ?
+       AND purchase_date >= ? AND purchase_date < ?`,
+    [
+      scope.accountId,
+      scope.spreadsheetId,
+      range?.start ?? '0000-01-01',
+      range?.endExclusive ?? '9999-12-31',
+    ],
+  );
+  return row?.total ?? 0;
+}
+
+export async function confirmedExpenseExists(db: SqlDatabase, expenseId: string): Promise<boolean> {
+  const row = await db.getFirst<{ found: number }>(
+    'SELECT 1 AS found FROM confirmed_expenses WHERE expense_id = ?',
+    [expenseId],
+  );
+  return row !== null;
+}

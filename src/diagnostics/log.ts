@@ -13,6 +13,20 @@ export const DIAGNOSTIC_CODES = [
   'database_open_failed',
   'invalid_settings',
   'unknown_error',
+  // Google connection results (ConnectionState kinds).
+  'ready',
+  'cancelled',
+  'reconnect_required',
+  'permission_missing',
+  'account_mismatch',
+  'choose_spreadsheet',
+  'spreadsheet_trashed',
+  'spreadsheet_missing',
+  'schema_invalid',
+  'unavailable',
+  'misconfigured',
+  'offline',
+  'failed',
 ] as const;
 
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];
@@ -21,7 +35,8 @@ export type DiagnosticEvent =
   | 'db.migrated'
   | 'db.migration_failed'
   | 'db.open_failed'
-  | 'app.render_failed';
+  | 'app.render_failed'
+  | 'google.connection_result';
 
 export type DiagnosticValue = number | boolean | DiagnosticCode;
 

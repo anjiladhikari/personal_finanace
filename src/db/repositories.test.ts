@@ -92,7 +92,6 @@ describe('pending submissions', () => {
       ['category', 'Other'],
       ['purchase_date', '2026-11-01'],
       ['account_id', 'someone-else'],
-      ['spreadsheet_id', 'other-sheet'],
       ['created_at', '2026-01-01T00:00:00.000Z'],
     ] as const) {
       expect(() =>
@@ -100,6 +99,21 @@ describe('pending submissions', () => {
       ).toThrow('pending submission payload is immutable');
     }
     expect((await getPendingSubmission(t.db, id))?.description).toBe('Groceries at the market');
+  });
+
+  test('pending rows can move spreadsheets only within the bound account', async () => {
+    await insertPendingSubmission(t.db, scope, submission());
+    await insertPendingSubmission(t.db, otherScope, submission({ submissionId: 'foreign' }));
+    t.raw
+      .prepare('UPDATE app_settings SET google_account_id = ?, google_account_email = ? WHERE id = 1')
+      .run(scope.accountId, 'owner@example.com');
+
+    const move = (id: string) => () =>
+      t.raw.prepare("UPDATE pending_submissions SET spreadsheet_id = 'replacement' WHERE submission_id = ?").run(id);
+
+    expect(move(submission().submissionId)).not.toThrow();
+    expect(move('foreign')).toThrow('pending submissions can only move within the bound Google account');
+    expect((await getPendingSubmission(t.db, 'foreign'))?.spreadsheetId).toBe(otherScope.spreadsheetId);
   });
 
   test('delivery bookkeeping columns can change', async () => {
