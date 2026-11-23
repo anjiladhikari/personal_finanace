@@ -56,43 +56,78 @@ function sameValues(a: ExpensePayload, b: ExpensePayload): boolean {
   );
 }
 
-export function buildLedger(rows: readonly SheetRowInput[], minorUnits: number): Ledger {
-  const issues: LedgerIssue[] = [];
-  const idsInSheet = new Set<string>();
-  const byId = new Map<string, LedgerExpense[]>();
-  let emptyRows = 0;
+function byRowNumber(a: { readonly rowNumber: number }, b: { readonly rowNumber: number }): number {
+  return a.rowNumber - b.rowNumber;
+}
 
-  for (const { rowNumber, cells } of rows) {
-    const inspection = inspectSheetRow(cells, minorUnits);
+/** Sorts by row number unless already in order (the usual case: rows arrive top to bottom). */
+function inRowOrder<T extends { readonly rowNumber: number }>(items: T[]): T[] {
+  for (let i = 1; i < items.length; i += 1) {
+    if ((items[i - 1] as T).rowNumber > (items[i] as T).rowNumber) return items.sort(byRowNumber);
+  }
+  return items;
+}
+
+/**
+ * Builds a ledger one row at a time, so a caller can validate a long sheet in
+ * slices and let the UI run in between. The result is the same as
+ * `buildLedger` over the same rows in the same order. Single use: call
+ * `finish` once, after the last `add`.
+ */
+export class LedgerBuilder {
+  private readonly issues: LedgerIssue[] = [];
+  private readonly idsInSheet = new Set<string>();
+  /** First valid row for each Expense ID, in the order first seen. */
+  private readonly firstById = new Map<string, LedgerExpense>();
+  /** Later valid rows, only for IDs seen more than once. */
+  private readonly laterById = new Map<string, LedgerExpense[]>();
+  private emptyRows = 0;
+
+  constructor(private readonly minorUnits: number) {}
+
+  add({ rowNumber, cells }: SheetRowInput): void {
+    const inspection = inspectSheetRow(cells, this.minorUnits);
     if (inspection.kind === 'empty') {
-      emptyRows += 1;
-      continue;
+      this.emptyRows += 1;
+      return;
     }
     if (inspection.kind === 'invalid') {
-      if (inspection.expenseId !== null) idsInSheet.add(inspection.expenseId);
-      issues.push({ rowNumber, kind: inspection.problem, expenseId: inspection.expenseId });
-      continue;
+      if (inspection.expenseId !== null) this.idsInSheet.add(inspection.expenseId);
+      this.issues.push({ rowNumber, kind: inspection.problem, expenseId: inspection.expenseId });
+      return;
     }
     const expense: LedgerExpense = { ...inspection.expense, rowNumber };
-    idsInSheet.add(expense.expenseId);
-    const group = byId.get(expense.expenseId);
-    if (group === undefined) byId.set(expense.expenseId, [expense]);
-    else group.push(expense);
-  }
-
-  const expenses: LedgerExpense[] = [];
-  for (const [expenseId, group] of byId) {
-    const [first, ...rest] = group;
-    if (first === undefined) continue;
-    if (rest.every((row) => sameValues(row, first))) {
-      expenses.push(first);
-      for (const row of rest) issues.push({ rowNumber: row.rowNumber, kind: 'duplicate_resolved', expenseId });
-    } else {
-      for (const row of group) issues.push({ rowNumber: row.rowNumber, kind: 'conflicting_duplicate', expenseId });
+    const { expenseId } = expense;
+    this.idsInSheet.add(expenseId);
+    if (!this.firstById.has(expenseId)) {
+      this.firstById.set(expenseId, expense);
+      return;
     }
+    const later = this.laterById.get(expenseId);
+    if (later === undefined) this.laterById.set(expenseId, [expense]);
+    else later.push(expense);
   }
 
-  expenses.sort((a, b) => a.rowNumber - b.rowNumber);
-  issues.sort((a, b) => a.rowNumber - b.rowNumber);
-  return { expenses, issues, emptyRows, idsInSheet };
+  finish(): Ledger {
+    const { issues, laterById } = this;
+    const expenses: LedgerExpense[] = [];
+    this.firstById.forEach((first, expenseId) => {
+      const later = laterById.get(expenseId);
+      if (later === undefined) {
+        expenses.push(first);
+      } else if (later.every((row) => sameValues(row, first))) {
+        expenses.push(first);
+        for (const row of later) issues.push({ rowNumber: row.rowNumber, kind: 'duplicate_resolved', expenseId });
+      } else {
+        for (const row of [first, ...later]) issues.push({ rowNumber: row.rowNumber, kind: 'conflicting_duplicate', expenseId });
+      }
+    });
+    return { expenses: inRowOrder(expenses), issues: inRowOrder(issues), emptyRows: this.emptyRows, idsInSheet: this.idsInSheet };
+  }
+}
+
+export function buildLedger(rows: readonly SheetRowInput[], minorUnits: number): Ledger {
+  const builder = new LedgerBuilder(minorUnits);
+  for (const row of rows) builder.add(row);
+  return builder.finish();
 }

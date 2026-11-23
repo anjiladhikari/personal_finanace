@@ -1,4 +1,4 @@
-import { breakdownByCategory } from './analysis';
+import { breakdownByCategory, percentTenths } from './analysis';
 
 describe('breakdownByCategory', () => {
   test('empty input gives a zero total and no categories', () => {
@@ -47,5 +47,24 @@ describe('breakdownByCategory', () => {
     ]);
     expect(result.totalMinor).toBe(4_000_000_000);
     expect(result.categories.map((c) => c.percentage)).toEqual([75, 25]);
+  });
+});
+
+describe('percentTenths', () => {
+  test('rounds to tenths of a percent for display and still adds up to exactly 100.0', () => {
+    expect(percentTenths([100, 100, 100])).toEqual([334, 333, 333]);
+    expect(percentTenths([50_000, 25_000])).toEqual([667, 333]);
+    expect(percentTenths([5_250, 750])).toEqual([875, 125]);
+    expect(percentTenths([2_050, 2_050, 2_050, 2_050, 450, 450, 450, 450])).toEqual([205, 205, 205, 205, 45, 45, 45, 45]);
+  });
+
+  test('a tiny share can round to 0; the spare tenth goes to the largest remainder', () => {
+    expect(percentTenths([999_998, 1, 1])).toEqual([1_000, 0, 0]);
+    expect(percentTenths([1_000_000_000, 1])).toEqual([1_000, 0]);
+  });
+
+  test('empty or zero input gives zeros', () => {
+    expect(percentTenths([])).toEqual([]);
+    expect(percentTenths([0, 0])).toEqual([0, 0]);
   });
 });

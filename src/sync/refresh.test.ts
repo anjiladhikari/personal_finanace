@@ -8,10 +8,11 @@ import { migrateDatabase } from '@/db/migrations';
 import { listPendingSubmissions } from '@/db/pendingSubmissions';
 import { analyzeSpending } from '@/db/spendingAnalysis';
 import { parseLocalDate, type LocalDate } from '@/domain/dates';
+import { buildLedger } from '@/domain/ledger';
 import type { DataScope } from '@/domain/expense';
 
 import { connectGoogle } from './connection';
-import { MAX_REFRESH_ATTEMPTS } from './refresh';
+import { MAX_REFRESH_ATTEMPTS, validateInSlices } from './refresh';
 import { SubmissionEngine, type SubmissionDeps } from './submissions';
 
 const ALICE = 'sub-alice';
@@ -363,4 +364,53 @@ test('changing periods queries SQLite only', async () => {
 
   expect(totals).toEqual([8_240, 380, 58_240, 58_620, 58_620]);
   expect(google.log).toHaveLength(0);
+});
+
+describe('keeping the UI responsive on long sheets', () => {
+  function sheetRows(count: number) {
+    return Array.from({ length: count }, (_, index) => ({
+      rowNumber: index + 2,
+      cells: [`2026-10-${String((index % 28) + 1).padStart(2, '0')}`, `Item ${index}`, (index % 50) + 1, 'Groceries', `id-${index}`],
+    }));
+  }
+
+  test('validation in slices gives exactly the one-pass result, pausing between slices', async () => {
+    const rows = sheetRows(1_250);
+    // Issues and duplicates that straddle slice boundaries.
+    rows[499] = { rowNumber: 501, cells: ['2026-10-01', 'Same', 5, 'Bills', 'dup'] };
+    rows[500] = { rowNumber: 502, cells: ['not a date', 'Bad', 5, 'Bills', 'bad-date'] };
+    rows[1_100] = { rowNumber: 1_102, cells: ['2026-10-01', 'Same', 5, 'Bills', 'dup'] };
+    rows[1_101] = { rowNumber: 1_103, cells: ['2026-10-02', 'Other', 6, 'Bills', 'id-3'] };
+    rows[1_102] = { rowNumber: 1_104, cells: [] };
+    let pauses = 0;
+
+    const sliced = await validateInSlices(rows, 2, async () => {
+      pauses += 1;
+    });
+
+    expect(sliced).toEqual(buildLedger(rows, 2));
+    expect(pauses).toBe(2);
+    expect(sliced.issues.map((issue) => [issue.rowNumber, issue.kind])).toEqual([
+      [5, 'conflicting_duplicate'],
+      [502, 'invalid_date'],
+      [1_102, 'duplicate_resolved'],
+      [1_103, 'conflicting_duplicate'],
+    ]);
+  });
+
+  test('a refresh of a long sheet pauses for the UI while validating', async () => {
+    seed(...sheetRows(1_200).map((row) => row.cells));
+    let pauses = 0;
+    engine = new SubmissionEngine(
+      deps({
+        pause: async () => {
+          pauses += 1;
+        },
+      }),
+    );
+
+    expect(await engine.refresh()).toMatchObject({ kind: 'refreshed', expenseCount: 1_203 });
+    // 1,203 rows (3 seeded in beforeEach) in slices of 500.
+    expect(pauses).toBe(2);
+  });
 });

@@ -32,6 +32,26 @@ export function periodLabel(period: Period): string {
   }
 }
 
+function tenthsText(tenths: number): string {
+  // 875 → "87.5", 670 → "67", 1000 → "100": one decimal, without a trailing ".0".
+  const whole = Math.floor(tenths / 10);
+  const tenth = tenths % 10;
+  return tenth === 0 ? String(whole) : `${whole}.${tenth}`;
+}
+
+/**
+ * A display percentage from tenths of a percent, e.g. "87.5%". A positive
+ * amount whose share rounds to 0 shows as "<0.1%" so it never reads as nothing.
+ */
+export function formatPercent(tenths: number, amountMinor: number): string {
+  return tenths === 0 && amountMinor > 0 ? '<0.1%' : `${tenthsText(tenths)}%`;
+}
+
+/** Spoken form of a percentage, e.g. "87.5 percent" or "less than 0.1 percent". */
+export function spokenPercent(tenths: number, amountMinor: number): string {
+  return tenths === 0 && amountMinor > 0 ? 'less than 0.1 percent' : `${tenthsText(tenths)} percent`;
+}
+
 /** Local date and time of an ISO instant, e.g. "22 Nov 2026, 14:05". */
 export function formatSyncTime(iso: string): string {
   const date = new Date(iso);

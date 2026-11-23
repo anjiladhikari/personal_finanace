@@ -60,7 +60,7 @@ keystores are: never commit `*.jks` / `*.keystore` (already in `.gitignore`).
 |---|---|---|---|---|
 | Local development build (`npx expo run:android`) | `~/.android/debug.keystore` (created by the Android SDK) | `keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android`, or `cd android && ./gradlew signingReport` | _to fill_ | _to create_ |
 | EAS development build | EAS-managed keystore | `npx eas-cli@latest credentials -p android` | _to fill_ | _to create_ |
-| Release APK | Your release keystore (or EAS-managed) | same as above for that keystore | _to fill_ | _to create_ |
+| Release APK (EAS `production` profile) | EAS-managed keystore, generated 22 Nov 2026 (project `@anjil07/expense-tracker`) | `npx eas-cli@latest credentials -p android`, or read from the APK's signing certificate | `F4:04:2C:68:24:D9:F9:3A:ED:A7:EC:23:EE:71:AE:7F:72:9C:51:AD` | _to create_ |
 
 If a build's SHA-1 is not registered, AuthorizationClient fails with
 `DEVELOPER_ERROR` and the app shows "This build isn't set up with Google yet".

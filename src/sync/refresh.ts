@@ -2,7 +2,7 @@ import { dataScopeOf, getAppSettings, isSetupComplete } from '@/db/appSettings';
 import { replaceLedgerCache } from '@/db/ledgerCache';
 import type { SqlDatabase } from '@/db/sql';
 import type { SubmissionErrorCode } from '@/domain/expense';
-import { buildLedger, affectsTotals, type SheetRowInput } from '@/domain/ledger';
+import { affectsTotals, LedgerBuilder, type Ledger, type SheetRowInput } from '@/domain/ledger';
 import { a1Range } from '@/domain/sheetContract';
 import type { GoogleAuthorizer } from '@/google/authorization';
 import { getDriveFile, type DriveFile } from '@/google/drive';
@@ -16,6 +16,19 @@ import { accessFailure, openSheetAccess } from './sheetAccess';
 export const REFRESH_CHUNK_ROWS = 2000;
 /** A refresh that sees the sheet change while reading starts again, at most this many times in total. */
 export const MAX_REFRESH_ATTEMPTS = 3;
+/**
+ * Rows validated between pauses. Validating a ten-year sheet in one go blocked
+ * the JS thread for ~110 ms on a fast desktop (several times longer on a
+ * phone); slices keep each block short so taps and rendering continue.
+ */
+export const LEDGER_SLICE_ROWS = 500;
+
+/** Lets the UI run: a macrotask, so pending touches and frames are handled first. */
+export function pauseForUi(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
 
 export type RefreshFailureCode = SubmissionErrorCode | 'changed_during_refresh';
 
@@ -38,6 +51,24 @@ export interface RefreshDeps {
   readonly isOnline: () => Promise<boolean>;
   readonly now: () => number;
   readonly refreshChunkRows?: number;
+  /** Called between validation slices; defaults to `pauseForUi`. */
+  readonly pause?: () => Promise<void>;
+}
+
+/** The same result as `buildLedger`, built in slices with a pause between them. */
+export async function validateInSlices(
+  rows: readonly SheetRowInput[],
+  minorUnits: number,
+  pause: () => Promise<void>,
+  sliceRows = LEDGER_SLICE_ROWS,
+): Promise<Ledger> {
+  const builder = new LedgerBuilder(minorUnits);
+  for (let index = 0; index < rows.length; index += 1) {
+    if (index > 0 && index % sliceRows === 0) await pause();
+    const row = rows[index];
+    if (row !== undefined) builder.add(row);
+  }
+  return builder.finish();
 }
 
 function unchanged(before: DriveFile, after: DriveFile): boolean {
@@ -103,7 +134,7 @@ export async function runRefresh(
     // change means someone edited the sheet: read it again from the start.
     if (!unchanged(access.file, after)) continue;
 
-    const ledger = buildLedger(rows, settings.currency.minorUnits);
+    const ledger = await validateInSlices(rows, settings.currency.minorUnits, deps.pause ?? pauseForUi);
     const syncedAt = new Date(deps.now()).toISOString();
     const committed = await replaceLedgerCache(deps.db, scope, ledger, syncedAt);
     if (committed === 'binding_changed') return { kind: 'failed', code: 'account_mismatch' };

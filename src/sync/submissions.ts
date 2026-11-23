@@ -44,6 +44,8 @@ export interface SubmissionDeps {
   readonly now: () => number;
   /** Rows per refresh read request (tests use small chunks). */
   readonly refreshChunkRows?: number;
+  /** Pause between refresh validation slices (defaults to yielding to the UI). */
+  readonly pause?: () => Promise<void>;
 }
 
 export type SyncStatus =
