@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { onSubmissionsChanged } from '@/db/changes';
+import type { CategoryRegistry } from '@/domain/categories';
 import { todayLocalDate } from '@/domain/dates';
 import type { SubmissionErrorCode, SubmissionState } from '@/domain/expense';
 import { emptyDraft, validateExpenseDraft, type ExpenseDraft, type ExpenseDraftErrors } from '@/domain/expenseDraft';
@@ -26,7 +27,7 @@ export type FormNotice = 'saved' | 'saved_sheet_only' | 'storage_failed' | 'not_
  * stays on screen, and pressing Save again retries the same submission
  * (same Expense ID) instead of creating a second one.
  */
-export function useExpenseForm(minorUnits: number) {
+export function useExpenseForm(minorUnits: number, categories?: CategoryRegistry) {
   const engine = useSubmissionEngine();
   const [draft, setDraft] = useState<ExpenseDraft>(() => emptyDraft(todayLocalDate()));
   const [showErrors, setShowErrors] = useState(false);
@@ -34,7 +35,7 @@ export function useExpenseForm(minorUnits: number) {
   const [notice, setNotice] = useState<FormNotice>(null);
   const busy = useRef(false);
 
-  const validation = validateExpenseDraft(draft, { minorUnits, today: todayLocalDate() });
+  const validation = validateExpenseDraft(draft, { minorUnits, today: todayLocalDate(), categories });
   const errors: ExpenseDraftErrors = showErrors && !validation.ok ? validation.errors : {};
   const locked = status.kind !== 'editing';
 
@@ -133,5 +134,8 @@ export function useExpenseForm(minorUnits: number) {
     reset(null);
   }, [reset]);
 
-  return { draft, errors, status, notice, locked, update, save, startNew };
+  /** Hides the confirmation after its display time. */
+  const clearNotice = useCallback(() => setNotice(null), []);
+
+  return { draft, errors, status, notice, locked, update, save, startNew, clearNotice };
 }

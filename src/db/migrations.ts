@@ -149,6 +149,40 @@ export const MIGRATIONS: readonly Migration[] = [
       ) STRICT`,
     ],
   },
+  {
+    version: 4,
+    name: 'last_confirmed_save',
+    statements: [
+      // When Google last confirmed an expense saved from this phone. Kept
+      // apart from last_successful_sync_at, which records full-history refreshes.
+      `ALTER TABLE app_settings ADD COLUMN last_confirmed_save_at TEXT
+       CHECK (last_confirmed_save_at IS NULL OR length(last_confirmed_save_at) > 0)`,
+    ],
+  },
+  {
+    version: 5,
+    name: 'custom_categories',
+    statements: [
+      // The user's own categories, per Google account. Expenses keep storing
+      // the category name; this adds a stable ID, icon and colour, plus the
+      // spreadsheet whose Categories tab is known to hold the definition
+      // (NULL until then, so a failed or interrupted backup is retried).
+      `CREATE TABLE IF NOT EXISTS categories (
+        category_id TEXT PRIMARY KEY NOT NULL CHECK (length(category_id) BETWEEN 1 AND 64),
+        account_id TEXT NOT NULL CHECK (length(account_id) > 0),
+        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 30),
+        name_key TEXT NOT NULL CHECK (length(name_key) > 0),
+        icon TEXT NOT NULL CHECK (length(icon) > 0),
+        colour TEXT NOT NULL CHECK (colour IN ('blue', 'orange', 'aqua', 'yellow', 'magenta', 'green', 'violet', 'red')),
+        created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+        synced_spreadsheet_id TEXT,
+        synced_at TEXT,
+        UNIQUE (account_id, name_key)
+      ) STRICT`,
+      // The spreadsheet whose Categories tab was last merged into this phone.
+      `ALTER TABLE app_settings ADD COLUMN categories_merged_spreadsheet_id TEXT`,
+    ],
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;

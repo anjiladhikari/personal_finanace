@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
-import { ScrollView, StyleSheet } from 'react-native';
+import { View } from 'react-native';
 
 import { dataScopeOf } from '@/db/appSettings';
 import { useAppSettings } from '@/db/useAppSettings';
 import { ExpenseForm } from '@/ui/ExpenseForm';
-import { colors, spacing } from '@/ui/theme';
+import { LoadingScreen } from '@/ui/LoadingScreen';
 import { UnresolvedSubmissions } from '@/ui/UnresolvedSubmissions';
 
 /**
@@ -16,20 +16,12 @@ export default function AddExpenseScreen() {
   const ready = settings.status === 'ready' ? settings.settings : null;
   const scope = useMemo(() => (ready === null ? null : dataScopeOf(ready)), [ready]);
 
+  if (ready === null) return <LoadingScreen />;
   return (
-    <ScrollView
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-      style={styles.screen}
-      testID="add-expense-screen"
-    >
-      {ready === null ? null : <ExpenseForm currency={ready.currency} />}
-      {ready === null || scope === null ? null : <UnresolvedSubmissions scope={scope} currency={ready.currency} />}
-    </ScrollView>
+    <View style={{ flex: 1 }} testID="add-expense-screen">
+      <ExpenseForm currency={ready.currency} scope={scope} lastConfirmedSaveAt={ready.lastConfirmedSaveAt}>
+        {scope === null ? null : <UnresolvedSubmissions scope={scope} currency={ready.currency} />}
+      </ExpenseForm>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { backgroundColor: colors.background },
-  content: { padding: spacing.md },
-});

@@ -1,4 +1,4 @@
-import { localDateParts, type Period } from '@/domain/dates';
+import { addDays, localDateParts, type LocalDate, type Period } from '@/domain/dates';
 import type { LedgerIssueKind } from '@/domain/ledger';
 import type { RefreshFailureCode } from '@/sync/refresh';
 
@@ -17,6 +17,32 @@ const MONTHS = [
   'December',
 ];
 
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function weekdayOf(date: LocalDate): string {
+  const { year, month, day } = localDateParts(date);
+  // Calendar arithmetic only: the weekday of a calendar date is the same in every zone.
+  return WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()] ?? '';
+}
+
+/** "Today · Tue 24 Nov 2026", "Yesterday · Mon 23 Nov 2026" or "Fri 14 Nov 2026". */
+export function purchaseDateLabel(date: LocalDate, today: LocalDate): string {
+  const { year, month, day } = localDateParts(date);
+  const text = `${weekdayOf(date).slice(0, 3)} ${day} ${MONTHS[month - 1]?.slice(0, 3)} ${year}`;
+  if (date === today) return `Today · ${text}`;
+  if (date === addDays(today, -1)) return `Yesterday · ${text}`;
+  return text;
+}
+
+/** Spoken form, e.g. "today, Tuesday 24 November 2026". */
+export function spokenPurchaseDate(date: LocalDate, today: LocalDate): string {
+  const { year, month, day } = localDateParts(date);
+  const text = `${weekdayOf(date)} ${day} ${MONTHS[month - 1]} ${year}`;
+  if (date === today) return `today, ${text}`;
+  if (date === addDays(today, -1)) return `yesterday, ${text}`;
+  return text;
+}
+
 export function periodLabel(period: Period): string {
   switch (period.kind) {
     case 'day': {
@@ -32,24 +58,30 @@ export function periodLabel(period: Period): string {
   }
 }
 
-function tenthsText(tenths: number): string {
-  // 875 → "87.5", 670 → "67", 1000 → "100": one decimal, without a trailing ".0".
+function tenthsText(tenths: number, trimZero: boolean): string {
+  // 875 → "87.5"; 670 → "67.0" (or "67" when trimmed for speech).
   const whole = Math.floor(tenths / 10);
   const tenth = tenths % 10;
-  return tenth === 0 ? String(whole) : `${whole}.${tenth}`;
+  return trimZero && tenth === 0 ? String(whole) : `${whole}.${tenth}`;
+}
+
+/** 36500 → "36,500". Integer counts only. */
+export function groupThousands(count: number): string {
+  return String(Math.trunc(count)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
 /**
- * A display percentage from tenths of a percent, e.g. "87.5%". A positive
- * amount whose share rounds to 0 shows as "<0.1%" so it never reads as nothing.
+ * A display percentage from tenths of a percent, always with one decimal so
+ * a column lines up ("87.5%", "41.0%"). A positive amount whose share rounds
+ * to 0 shows as "<0.1%" so it never reads as nothing.
  */
 export function formatPercent(tenths: number, amountMinor: number): string {
-  return tenths === 0 && amountMinor > 0 ? '<0.1%' : `${tenthsText(tenths)}%`;
+  return tenths === 0 && amountMinor > 0 ? '<0.1%' : `${tenthsText(tenths, false)}%`;
 }
 
 /** Spoken form of a percentage, e.g. "87.5 percent" or "less than 0.1 percent". */
 export function spokenPercent(tenths: number, amountMinor: number): string {
-  return tenths === 0 && amountMinor > 0 ? 'less than 0.1 percent' : `${tenthsText(tenths)} percent`;
+  return tenths === 0 && amountMinor > 0 ? 'less than 0.1 percent' : `${tenthsText(tenths, true)} percent`;
 }
 
 /** Local date and time of an ISO instant, e.g. "22 Nov 2026, 14:05". */

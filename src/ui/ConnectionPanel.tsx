@@ -5,7 +5,7 @@ import { EXPENSE_COLUMNS, SPREADSHEET_NAME } from '@/domain/sheetContract';
 import type { ConnectionRequest, ConnectionState, SpreadsheetCandidate } from '@/sync/connection';
 
 import { Button } from './Button';
-import { colors, spacing } from './theme';
+import { spacing, typography, useTheme, useThemedStyles, type Theme } from './theme';
 import type { ConnectionUiState } from './useGoogleConnection';
 
 interface Props {
@@ -22,6 +22,7 @@ function shortDate(iso: string | null): string {
 }
 
 function Message({ title, body }: { readonly title: string; readonly body?: string }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.message} accessibilityRole="summary">
       <Text style={styles.title}>{title}</Text>
@@ -37,6 +38,7 @@ function CandidateList({
   readonly candidates: readonly SpreadsheetCandidate[];
   readonly onRun: Props['onRun'];
 }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.actions}>
       {candidates.map((candidate) => (
@@ -212,6 +214,8 @@ function ResultView({ result, onRun }: { readonly result: ConnectionState; reado
 }
 
 export function ConnectionPanel({ ui, onRun }: Props) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   if (ui.status === 'working') {
     return (
       <View style={styles.working} accessibilityLiveRegion="polite">
@@ -228,10 +232,12 @@ export function ConnectionPanel({ ui, onRun }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  actions: { gap: spacing.sm },
-  message: { gap: spacing.xs, marginBottom: spacing.sm },
-  title: { fontSize: 17, fontWeight: '600', color: colors.text },
-  body: { fontSize: 15, lineHeight: 21, color: colors.textMuted },
-  working: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm },
-});
+function makeStyles({ colors }: Theme) {
+  return StyleSheet.create({
+    actions: { gap: spacing.sm },
+    message: { gap: spacing.xs, marginBottom: spacing.sm },
+    title: { ...typography.bodyStrong, fontSize: 17, color: colors.text },
+    body: { ...typography.body, fontSize: 15, lineHeight: 21, color: colors.textMuted },
+    working: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm },
+  });
+}

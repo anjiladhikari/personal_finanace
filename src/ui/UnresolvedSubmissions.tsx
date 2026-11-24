@@ -11,7 +11,8 @@ import { useSubmissionEngine } from '@/sync/SubmissionEngineContext';
 
 import { Button } from './Button';
 import { submissionStatusLabel } from './submissionLabels';
-import { colors, spacing } from './theme';
+import { Icon } from './Icon';
+import { radii, spacing, typography, useTheme, useThemedStyles, type Theme } from './theme';
 
 /** Every saved expense not yet confirmed in Google Sheets, with its state. */
 export function UnresolvedSubmissions({ scope, currency }: { readonly scope: DataScope; readonly currency: CurrencyConfig }) {
@@ -19,6 +20,8 @@ export function UnresolvedSubmissions({ scope, currency }: { readonly scope: Dat
   const engine = useSubmissionEngine();
   const [items, setItems] = useState<PendingSubmission[]>([]);
   const [retrying, setRetrying] = useState(false);
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
 
   useEffect(() => {
     let active = true;
@@ -49,7 +52,12 @@ export function UnresolvedSubmissions({ scope, currency }: { readonly scope: Dat
 
   return (
     <View style={styles.section} testID="unresolved-list">
-      <Text style={styles.heading}>Not yet in Google Sheets ({items.length})</Text>
+      <View style={styles.headingRow}>
+        <Icon name="clock" color={colors.textMuted} size={20} />
+        <Text style={styles.heading} accessibilityRole="header">
+          Not yet in Google Sheets ({items.length})
+        </Text>
+      </View>
       {items.map((item) => (
         <View key={item.submissionId} style={styles.row} testID={`unresolved-${item.submissionId}`}>
           <Text style={styles.title}>
@@ -61,22 +69,34 @@ export function UnresolvedSubmissions({ scope, currency }: { readonly scope: Dat
           </Text>
         </View>
       ))}
-      <Button variant="secondary" label={retrying ? 'Retrying…' : 'Retry now'} onPress={() => void retry()} disabled={retrying} testID="retry-now" />
+      <Button
+        variant="secondary"
+        icon="refresh"
+        label={retrying ? 'Retrying…' : 'Retry now'}
+        onPress={() => void retry()}
+        disabled={retrying}
+        busy={retrying}
+        testID="retry-now"
+      />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  section: { gap: spacing.sm, marginTop: spacing.lg },
-  heading: { fontSize: 16, fontWeight: '600', color: colors.text },
-  row: {
-    backgroundColor: colors.surface,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.sm,
-    gap: 2,
-  },
-  title: { fontSize: 15, color: colors.text },
-  status: { fontSize: 13, color: colors.textMuted },
-});
+function makeStyles({ colors }: Theme) {
+  return StyleSheet.create({
+    section: { gap: spacing.sm, marginTop: spacing.xl },
+    headingRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    heading: { ...typography.bodyStrong, color: colors.text, flexShrink: 1 },
+    row: {
+      backgroundColor: colors.surface,
+      borderRadius: radii.md,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.lg,
+      gap: spacing.xs,
+    },
+    title: { ...typography.body, fontSize: 15, color: colors.text },
+    status: { ...typography.caption, color: colors.textMuted },
+  });
+}

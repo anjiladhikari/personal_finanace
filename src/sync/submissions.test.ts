@@ -2,6 +2,7 @@ import { FakeAuthorizer, FakeGoogle } from '../../test/fakeGoogle';
 import { openTestDatabase, type TestDatabase } from '../../test/sqliteTestDatabase';
 
 import { listConfirmedExpenses, sumConfirmedSpending } from '@/db/confirmedExpenses';
+import { getAppSettings } from '@/db/appSettings';
 import { migrateDatabase } from '@/db/migrations';
 import {
   insertPendingSubmission,
@@ -83,6 +84,24 @@ describe('confirmed save', () => {
     expect(append?.body).toMatchObject({ values: [['2026-11-21', 'Coffee', 4.5, 'Eating out', 'uuid-1']] });
     expect(await pending()).toEqual([]);
     expect(await confirmed()).toEqual([{ expenseId: 'uuid-1', ...coffee }]);
+  });
+
+  test('a confirmed save records its own time, separate from the last full refresh', async () => {
+    expect(await getAppSettings(device.db)).toMatchObject({ lastConfirmedSaveAt: null, lastSuccessfulSyncAt: null });
+    clock = T0 + 5_000;
+
+    await new SubmissionEngine(deps()).submit(coffee);
+
+    expect(await getAppSettings(device.db)).toMatchObject({
+      lastConfirmedSaveAt: new Date(T0 + 5_000).toISOString(),
+      lastSuccessfulSyncAt: null,
+    });
+  });
+
+  test('a save that is not confirmed leaves the confirmed save time unchanged', async () => {
+    online = false;
+    await new SubmissionEngine(deps()).submit(coffee);
+    expect((await getAppSettings(device.db)).lastConfirmedSaveAt).toBeNull();
   });
 
   test('formula-like descriptions are sent as literal text', async () => {

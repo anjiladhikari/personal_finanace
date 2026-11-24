@@ -1,43 +1,54 @@
-import { isExpenseCategory, type ExpenseCategory } from '@/domain/expense';
+import { BUILT_IN_REGISTRY, colourForName, type CategoryColour, type CategoryRegistry } from '@/domain/categories';
+
+import type { Scheme } from './theme';
 
 /**
- * Categorical chart colours. Each category keeps its colour in every period
- * and in both chart types. Seven colours cannot all be told apart pairwise
- * under colour-vision deficiency, so colour is never the only cue: every bar
- * and pie slice also carries its category name. Several sit below 3:1 on
- * white for the same reason they are always labelled.
+ * Hex steps for each category colour. Each category keeps its colour in every
+ * period and in both chart types. Eight hues cannot all be told apart
+ * pairwise under colour-vision deficiency, so colour is never the only cue:
+ * every bar and pie slice also carries its category name.
  */
-const SLOTS = ['#2A78D6', '#EB6834', '#1BAF7A', '#EDA100', '#E87BA4', '#008300', '#6250D6', '#E34948'] as const;
-
-const FIXED: Readonly<Record<ExpenseCategory, string>> = {
-  Groceries: SLOTS[0],
-  'Eating out': SLOTS[1],
-  Transport: SLOTS[2],
-  Bills: SLOTS[3],
-  Shopping: SLOTS[4],
-  Health: SLOTS[5],
-  Other: SLOTS[6],
+const HEX: Readonly<Record<Scheme, Readonly<Record<CategoryColour, string>>>> = {
+  light: {
+    blue: '#2A78D6',
+    orange: '#EB6834',
+    aqua: '#1BAF7A',
+    yellow: '#EDA100',
+    magenta: '#E87BA4',
+    green: '#008300',
+    violet: '#6250D6',
+    red: '#E34948',
+  },
+  // The same hues stepped for the dark card colour; all ≥ 3:1 against it.
+  dark: {
+    blue: '#3987E5',
+    orange: '#D95926',
+    aqua: '#199E70',
+    yellow: '#C98500',
+    magenta: '#D55181',
+    green: '#0CA30C',
+    violet: '#9085E9',
+    red: '#E66767',
+  },
 };
 
-/** Neutral grey for the aggregated pie slice; 3.5:1 on white. */
-export const REMAINING_COLOR = '#8A8984';
+/** Neutral grey for the aggregated pie slice (3.5:1 on white, 5.4:1 on the dark card). */
+const REMAINING: Readonly<Record<Scheme, string>> = { light: '#8A8984', dark: '#8F948F' };
 
-function hashName(name: string): number {
-  // FNV-1a over UTF-16 code units: the same name gives the same slot everywhere.
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < name.length; i += 1) {
-    hash ^= name.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash;
+export function remainingColor(scheme: Scheme = 'light'): string {
+  return REMAINING[scheme];
+}
+
+export function colourHex(colour: CategoryColour, scheme: Scheme = 'light'): string {
+  return HEX[scheme][colour];
 }
 
 /**
- * The app's own categories have fixed colours. A category typed directly in
- * the sheet gets a colour derived from its name, which is stable but may match
- * another category's colour; the name beside it tells them apart.
+ * The chart colour of a category label: its definition's colour (built-in or
+ * custom, stored so it never changes), or one derived from the name for a
+ * label with no definition (e.g. typed directly in the sheet).
  */
-export function categoryColor(category: string): string {
-  if (isExpenseCategory(category)) return FIXED[category];
-  return SLOTS[hashName(category) % SLOTS.length] ?? SLOTS[0];
+export function categoryColor(category: string, scheme: Scheme = 'light', registry: CategoryRegistry = BUILT_IN_REGISTRY): string {
+  const colour = registry.find(category)?.colour ?? colourForName(category);
+  return HEX[scheme][colour];
 }

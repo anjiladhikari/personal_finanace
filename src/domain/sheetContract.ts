@@ -99,6 +99,30 @@ export function inspectExpensesTab(probe: readonly (readonly unknown[])[]): TabI
   return matches ? { kind: 'ready' } : { kind: 'invalid', problem: 'header_mismatch' };
 }
 
+// ---------------------------------------------------------------------------
+// Categories tab: a backup of the user's own category definitions, so they
+// come back after a reinstall. Found by the sheetId in a Drive app property.
+
+export const CATEGORIES_TAB_TITLE = 'Categories';
+export const CATEGORY_COLUMNS = ['Category ID', 'Name', 'Icon', 'Colour', 'Created at'] as const;
+export const APP_PROPERTY_CATEGORIES_TAB_ID = 'expenseTrackerCategoriesTabId';
+
+export function taggedCategoriesTabId(appProperties: Readonly<Record<string, string>> | undefined): number | null {
+  const raw = appProperties?.[APP_PROPERTY_CATEGORIES_TAB_ID];
+  if (raw === undefined || !/^\d{1,10}$/.test(raw)) return null;
+  return Number(raw);
+}
+
+/** Same rules as the Expenses tab: write a header only into an empty tab; never relabel data. */
+export function inspectCategoriesTab(probe: readonly (readonly unknown[])[]): TabInspection {
+  const [header, firstRow] = probe;
+  if (isBlankRow(header)) {
+    return isBlankRow(firstRow) ? { kind: 'empty' } : { kind: 'invalid', problem: 'data_without_header' };
+  }
+  const matches = CATEGORY_COLUMNS.every((column, i) => String(header?.[i] ?? '').trim() === column);
+  return matches ? { kind: 'ready' } : { kind: 'invalid', problem: 'header_mismatch' };
+}
+
 /** A1 notation for a range inside a tab, quoting the title safely. */
 export function a1Range(tabTitle: string, cells: string): string {
   return `'${tabTitle.replaceAll("'", "''")}'!${cells}`;

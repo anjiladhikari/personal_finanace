@@ -1,5 +1,6 @@
 import { validatePurchaseDate, type LocalDate, type PurchaseDateError } from './dates';
-import { isExpenseCategory, type ExpensePayload } from './expense';
+import { BUILT_IN_REGISTRY, type CategoryRegistry } from './categories';
+import type { ExpensePayload } from './expense';
 import { parseAmount, type AmountParseError } from './money';
 
 /** What the form holds while the user types. */
@@ -27,8 +28,15 @@ export function emptyDraft(today: LocalDate): ExpenseDraft {
 
 export function validateExpenseDraft(
   draft: ExpenseDraft,
-  context: { readonly minorUnits: number; readonly today: LocalDate },
+  context: {
+    readonly minorUnits: number;
+    readonly today: LocalDate;
+    /** The categories an expense may use; built-ins only if omitted. */
+    readonly categories?: CategoryRegistry;
+  },
 ): DraftValidation {
+  const registry = context.categories ?? BUILT_IN_REGISTRY;
+  const category = draft.category !== null && registry.isSelectable(draft.category) ? draft.category : null;
   const errors: {
     description?: 'empty';
     amount?: AmountParseError;
@@ -42,12 +50,12 @@ export function validateExpenseDraft(
   const amount = parseAmount(draft.amountText, context.minorUnits);
   if (!amount.ok) errors.amount = amount.error;
 
-  if (!isExpenseCategory(draft.category)) errors.category = 'missing';
+  if (category === null) errors.category = 'missing';
 
   const date = validatePurchaseDate(draft.purchaseDate, context.today);
   if (!date.ok) errors.purchaseDate = date.error;
 
-  if (!amount.ok || !date.ok || !isExpenseCategory(draft.category) || description === '') {
+  if (!amount.ok || !date.ok || category === null || description === '') {
     return { ok: false, errors };
   }
   return {
@@ -56,7 +64,7 @@ export function validateExpenseDraft(
       purchaseDate: date.date,
       description,
       amountMinor: amount.amountMinor,
-      category: draft.category,
+      category,
     },
   };
 }

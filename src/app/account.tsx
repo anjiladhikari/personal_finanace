@@ -5,13 +5,14 @@ import { useAppSettings } from '@/db/useAppSettings';
 import { SPREADSHEET_NAME } from '@/domain/sheetContract';
 import { Button } from '@/ui/Button';
 import { ConnectionPanel } from '@/ui/ConnectionPanel';
-import { colors, spacing } from '@/ui/theme';
+import { radii, spacing, typography, useThemedStyles, type Theme } from '@/ui/theme';
 import { useGoogleConnection } from '@/ui/useGoogleConnection';
 
 /** Shows the bound account and lets the user check or repair the connection. */
 export default function AccountScreen() {
   const settings = useAppSettings();
   const { ui, run } = useGoogleConnection();
+  const styles = useThemedStyles(makeStyles);
   const bound = settings.status === 'ready' ? settings.settings : null;
 
   const openSheet = () => {
@@ -23,7 +24,7 @@ export default function AccountScreen() {
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.content} testID="account-screen">
+    <ScrollView style={styles.screen} contentContainerStyle={styles.content} testID="account-screen">
       <View style={styles.card}>
         <Text style={styles.label}>Google account</Text>
         <Text style={styles.value} testID="account-email">
@@ -54,16 +55,19 @@ export default function AccountScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  content: { padding: spacing.md, gap: spacing.md },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.md,
-    gap: spacing.xs,
-  },
-  label: { fontSize: 13, color: colors.textMuted },
-  value: { fontSize: 16, color: colors.text, marginBottom: spacing.sm },
-});
+function makeStyles({ colors }: Theme) {
+  return StyleSheet.create({
+    screen: { backgroundColor: colors.background },
+    content: { padding: spacing.lg, gap: spacing.md },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: radii.lg,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      padding: spacing.lg,
+      gap: spacing.xs,
+    },
+    label: { ...typography.caption, color: colors.textMuted },
+    value: { ...typography.body, color: colors.text, marginBottom: spacing.sm },
+  });
+}

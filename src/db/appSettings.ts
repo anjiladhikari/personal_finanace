@@ -14,8 +14,12 @@ export interface AppSettings {
   readonly spreadsheetId: string | null;
   /** Numeric sheetId of the Expenses tab inside the spreadsheet. */
   readonly expensesSheetId: number | null;
-  /** UTC ISO-8601 instant of the last completed synchronisation. */
+  /** UTC ISO-8601 instant of the last completed full-history refresh. */
   readonly lastSuccessfulSyncAt: string | null;
+  /** UTC ISO-8601 instant Google last confirmed an expense saved from this phone. */
+  readonly lastConfirmedSaveAt: string | null;
+  /** Spreadsheet whose Categories tab was last merged into this phone's categories. */
+  readonly categoriesMergedSpreadsheetId: string | null;
 }
 
 interface AppSettingsRow {
@@ -27,12 +31,15 @@ interface AppSettingsRow {
   spreadsheet_id: string | null;
   expenses_sheet_id: number | null;
   last_successful_sync_at: string | null;
+  last_confirmed_save_at: string | null;
+  categories_merged_spreadsheet_id: string | null;
 }
 
 export async function getAppSettings(db: SqlDatabase): Promise<AppSettings> {
   const row = await db.getFirst<AppSettingsRow>(
     `SELECT schema_version, currency_code, currency_minor_units, google_account_id,
-            google_account_email, spreadsheet_id, expenses_sheet_id, last_successful_sync_at
+            google_account_email, spreadsheet_id, expenses_sheet_id, last_successful_sync_at,
+            last_confirmed_save_at, categories_merged_spreadsheet_id
      FROM app_settings WHERE id = ?`,
     [1],
   );
@@ -51,6 +58,8 @@ export async function getAppSettings(db: SqlDatabase): Promise<AppSettings> {
     spreadsheetId: row.spreadsheet_id,
     expensesSheetId: row.expenses_sheet_id,
     lastSuccessfulSyncAt: row.last_successful_sync_at,
+    lastConfirmedSaveAt: row.last_confirmed_save_at,
+    categoriesMergedSpreadsheetId: row.categories_merged_spreadsheet_id,
   };
 }
 
@@ -112,7 +121,8 @@ export async function bindGoogleAccount(
     await tx.run(
       `UPDATE app_settings
        SET google_account_id = ?, google_account_email = ?, spreadsheet_id = NULL,
-           expenses_sheet_id = NULL, last_successful_sync_at = NULL
+           expenses_sheet_id = NULL, last_successful_sync_at = NULL,
+           last_confirmed_save_at = NULL, categories_merged_spreadsheet_id = NULL
        WHERE id = ?`,
       [identity.accountId, identity.email, 1],
     );

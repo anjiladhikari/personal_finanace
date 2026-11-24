@@ -196,13 +196,15 @@ export async function unblockSubmissions(db: SqlDatabase, scope: DataScope): Pro
 
 /**
  * Completes a submission in one local transaction: the confirmed record is
- * added (from the remote row when recovering) and the pending row removed.
+ * added (from the remote row when recovering), the pending row removed and
+ * the last confirmed save time recorded.
  */
 export async function confirmSubmission(
   db: SqlDatabase,
   scope: DataScope,
   submissionId: string,
   confirmed: ExpensePayload,
+  confirmedAt: string,
 ): Promise<void> {
   if (!isValidExpensePayload(confirmed)) throw new Error('Invalid confirmed expense');
   await db.transaction(async (tx) => {
@@ -222,5 +224,6 @@ export async function confirmSubmission(
       ],
     );
     await tx.run('DELETE FROM pending_submissions WHERE submission_id = ?', [submissionId]);
+    await tx.run('UPDATE app_settings SET last_confirmed_save_at = ? WHERE id = ?', [confirmedAt, 1]);
   });
 }

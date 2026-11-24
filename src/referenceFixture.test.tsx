@@ -131,7 +131,7 @@ test('My spending shows the expected results, and period switches stay local', a
   await renderRouter('src/app');
   await fireEvent.press(await screen.findByTestId('tab-my-spending'));
   // First visit with an empty cache loads the sheet once.
-  await screen.findByText(/^Showing saved results\./);
+  await screen.findByText(/^Last refreshed .*\. Showing saved results\.$/);
   const readsAfterFirstLoad = ledgerReads().length;
   expect(readsAfterFirstLoad).toBeGreaterThan(0);
 

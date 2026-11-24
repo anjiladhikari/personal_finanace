@@ -3,13 +3,15 @@ import { StyleSheet, Text } from 'react-native';
 
 import { isSetupComplete } from '@/db/appSettings';
 import { useAppSettings } from '@/db/useAppSettings';
+import { Icon } from '@/ui/Icon';
 import { LoadingScreen } from '@/ui/LoadingScreen';
-import { colors, spacing } from '@/ui/theme';
+import { spacing, typography, useTheme } from '@/ui/theme';
 
 function AccountLink() {
+  const { colors } = useTheme();
   return (
-    <Link href="/account" style={styles.headerLink} testID="open-account">
-      <Text style={styles.headerLinkText}>Account</Text>
+    <Link href="/account" style={styles.headerLink} testID="open-account" accessibilityLabel="Google account">
+      <Text style={[styles.headerLinkText, { color: colors.accent }]}>Account</Text>
     </Link>
   );
 }
@@ -20,6 +22,7 @@ function AccountLink() {
  */
 export default function TabsLayout() {
   const settings = useAppSettings();
+  const { colors } = useTheme();
   if (settings.status === 'loading') return <LoadingScreen />;
   if (settings.status === 'ready' && !isSetupComplete(settings.settings)) {
     return <Redirect href="/setup" />;
@@ -30,26 +33,38 @@ export default function TabsLayout() {
       screenOptions={{
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.textMuted,
-        // Text-only tabs until the icon set is chosen.
-        tabBarIconStyle: { display: 'none' },
-        tabBarLabelStyle: { fontSize: 15, fontWeight: '600' },
+        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+        tabBarLabelStyle: { ...typography.label, fontWeight: '600' },
+        // The keyboard covers the tab bar anyway; hiding it keeps Save directly above the keyboard.
+        tabBarHideOnKeyboard: true,
+        headerStyle: { backgroundColor: colors.surface },
+        headerTitleStyle: { ...typography.title, color: colors.text },
+        headerShadowVisible: false,
         sceneStyle: { backgroundColor: colors.background },
         headerRight: () => <AccountLink />,
       }}
     >
       <Tabs.Screen
         name="index"
-        options={{ title: 'Add expense', tabBarButtonTestID: 'tab-add-expense' }}
+        options={{
+          title: 'Add expense',
+          tabBarButtonTestID: 'tab-add-expense',
+          tabBarIcon: ({ color }) => <Icon name="add" color={color} />,
+        }}
       />
       <Tabs.Screen
         name="spending"
-        options={{ title: 'My spending', tabBarButtonTestID: 'tab-my-spending' }}
+        options={{
+          title: 'My spending',
+          tabBarButtonTestID: 'tab-my-spending',
+          tabBarIcon: ({ color }) => <Icon name="chart" color={color} />,
+        }}
       />
     </Tabs>
   );
 }
 
 const styles = StyleSheet.create({
-  headerLink: { paddingHorizontal: spacing.md },
-  headerLinkText: { color: colors.accent, fontSize: 16, fontWeight: '600' },
+  headerLink: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
+  headerLinkText: { ...typography.bodyStrong },
 });

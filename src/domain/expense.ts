@@ -17,21 +17,6 @@ export interface DataScope {
   readonly spreadsheetId: string;
 }
 
-export const EXPENSE_CATEGORIES = [
-  'Groceries',
-  'Eating out',
-  'Transport',
-  'Bills',
-  'Shopping',
-  'Health',
-  'Other',
-] as const;
-export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
-
-export function isExpenseCategory(value: unknown): value is ExpenseCategory {
-  return typeof value === 'string' && (EXPENSE_CATEGORIES as readonly string[]).includes(value);
-}
-
 /**
  * Stored states of an unconfirmed submission:
  * - pending:   saved on the phone, not (or definitely not) written to Sheets

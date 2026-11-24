@@ -1,9 +1,9 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Appearance, Text, View } from 'react-native';
 
 import { diagnosticCodeFor, logDiagnostic } from '@/diagnostics/log';
 
-import { colors, spacing } from './theme';
+import { spacing, themes, typography } from './theme';
 
 interface Props {
   readonly children: ReactNode;
@@ -30,24 +30,18 @@ export class AppErrorBoundary extends Component<Props, State> {
 
   override render() {
     if (!this.state.failed) return this.props.children;
+    // A class component cannot use hooks; read the appearance directly.
+    const { colors } = themes[Appearance.getColorScheme() === 'dark' ? 'dark' : 'light'];
     return (
-      <View style={styles.container} accessibilityRole="alert">
-        <Text style={styles.title}>Something went wrong</Text>
-        <Text style={styles.body}>
+      <View
+        style={{ flex: 1, justifyContent: 'center', padding: spacing.xl, backgroundColor: colors.background }}
+        accessibilityRole="alert"
+      >
+        <Text style={{ ...typography.title, color: colors.text, marginBottom: spacing.sm }}>Something went wrong</Text>
+        <Text style={{ ...typography.body, color: colors.textMuted }}>
           Close the app and open it again. Expenses you have already saved stay on this phone.
         </Text>
       </View>
     );
   }
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: spacing.lg,
-    backgroundColor: colors.background,
-  },
-  title: { fontSize: 20, fontWeight: '600', color: colors.text, marginBottom: spacing.sm },
-  body: { fontSize: 16, lineHeight: 22, color: colors.textMuted },
-});
