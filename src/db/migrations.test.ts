@@ -35,6 +35,7 @@ describe('migrateDatabase', () => {
     expect(await readSchemaVersion(testDb.db)).toBe(LATEST_SCHEMA_VERSION);
     expect(tableNames(testDb)).toEqual([
       'app_settings',
+      'categories',
       'confirmed_expenses',
       'confirmed_expenses_scope_date',
       'pending_submissions',
@@ -56,6 +57,8 @@ describe('migrateDatabase', () => {
       spreadsheetId: null,
       expensesSheetId: null,
       lastSuccessfulSyncAt: null,
+      lastConfirmedSaveAt: null,
+      categoriesMergedSpreadsheetId: null,
     });
   });
 
@@ -172,5 +175,47 @@ describe('upgrading an existing v1 database', () => {
     expect(result).toEqual({ fromVersion: 1, toVersion: LATEST_SCHEMA_VERSION, applied: LATEST_SCHEMA_VERSION - 1 });
     expect(await getAppSettings(testDb.db)).toMatchObject({ googleAccountId: 'acct-1', googleAccountEmail: null });
     expect(testDb.raw.prepare('SELECT submission_id FROM pending_submissions').all()).toEqual([{ submission_id: 'sub-1' }]);
+  });
+
+  test('v4 keeps settings and adds an empty last confirmed save time', async () => {
+    await migrateDatabase(
+      testDb.db,
+      MIGRATIONS.filter((m) => m.version <= 3),
+    );
+    testDb.raw.prepare("UPDATE app_settings SET last_successful_sync_at = '2026-11-20T09:30:00.000Z' WHERE id = 1").run();
+
+    expect(await migrateDatabase(testDb.db)).toEqual({ fromVersion: 3, toVersion: LATEST_SCHEMA_VERSION, applied: LATEST_SCHEMA_VERSION - 3 });
+    expect(await getAppSettings(testDb.db)).toMatchObject({
+      lastSuccessfulSyncAt: '2026-11-20T09:30:00.000Z',
+      lastConfirmedSaveAt: null,
+    });
+    expect(() => testDb.raw.prepare("UPDATE app_settings SET last_confirmed_save_at = '' WHERE id = 1").run()).toThrow();
+  });
+
+  test('v5 adds an empty categories table; existing expenses keep their category text', async () => {
+    await migrateDatabase(
+      testDb.db,
+      MIGRATIONS.filter((m) => m.version <= 4),
+    );
+    testDb.raw
+      .prepare(
+        `INSERT INTO confirmed_expenses (expense_id, account_id, spreadsheet_id, purchase_date, description, amount_minor, category)
+         VALUES ('e1', 'acct-1', 'sheet-1', '2026-11-01', 'Rent', 50000, 'Bills'), ('e2', 'acct-1', 'sheet-1', '2026-11-02', 'x', 100, 'Typed in sheet')`,
+      )
+      .run();
+
+    expect(await migrateDatabase(testDb.db)).toEqual({ fromVersion: 4, toVersion: 5, applied: 1 });
+    expect(testDb.raw.prepare('SELECT COUNT(*) AS n FROM categories').get()).toEqual({ n: 0 });
+    expect(testDb.raw.prepare('SELECT category FROM confirmed_expenses ORDER BY expense_id').all()).toEqual([
+      { category: 'Bills' },
+      { category: 'Typed in sheet' },
+    ]);
+    // Names are unique per account, ignoring case and spacing (via name_key).
+    const insert = testDb.raw.prepare(
+      `INSERT INTO categories (category_id, account_id, name, name_key, icon, colour, created_at) VALUES (?, 'acct-1', ?, ?, 'tag', 'blue', 'x')`,
+    );
+    insert.run('c1', 'Kids', 'kids');
+    expect(() => insert.run('c2', 'KIDS', 'kids')).toThrow(/UNIQUE/);
+    expect(() => insert.run('c3', 'x'.repeat(31), 'x'.repeat(31))).toThrow(/CHECK/);
   });
 });

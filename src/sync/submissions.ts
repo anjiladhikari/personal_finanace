@@ -1,5 +1,6 @@
 import { dataScopeOf, getAppSettings, isSetupComplete, type AppSettings } from '@/db/appSettings';
-import { notifySettingsChanged, notifySubmissionsChanged } from '@/db/changes';
+import { DuplicateCategoryError, insertCustomCategory, listCustomCategories } from '@/db/categories';
+import { notifyCategoriesChanged, notifySettingsChanged, notifySubmissionsChanged } from '@/db/changes';
 import { confirmedExpenseExists } from '@/db/confirmedExpenses';
 import {
   confirmSubmission,
@@ -14,6 +15,16 @@ import {
   type SubmissionError,
 } from '@/db/pendingSubmissions';
 import type { SqlDatabase } from '@/db/sql';
+import {
+  categoryKey,
+  colourForName,
+  DEFAULT_CATEGORY_ICON,
+  iconOrDefault,
+  isCategoryColour,
+  validateCategoryName,
+  type CategoryDefinition,
+  type CategoryRegistry,
+} from '@/domain/categories';
 import type { DataScope, ExpensePayload, SubmissionErrorCode, SubmissionState } from '@/domain/expense';
 import { a1Range, HEADER_RANGE_COLUMNS } from '@/domain/sheetContract';
 import { parseSheetRow, toSheetRow } from '@/domain/sheetRow';
@@ -29,8 +40,15 @@ import { GoogleApiError, type FetchLike } from '@/google/http';
 import { ReconnectRequiredError } from '@/google/session';
 import { appendRow, getValues } from '@/google/sheets';
 
+import { syncCategories } from './categorySync';
 import { runRefresh, type RefreshFailureCode, type RefreshOutcome, type RefreshProgress } from './refresh';
 import { accessFailure, err, openSheetAccess, type SheetAccess } from './sheetAccess';
+
+export type CreateCategoryOutcome =
+  | { readonly kind: 'created'; readonly category: CategoryDefinition }
+  | { readonly kind: 'duplicate'; readonly existing: CategoryDefinition }
+  | { readonly kind: 'invalid'; readonly error: 'blank' | 'too_long' | 'invalid_characters' }
+  | { readonly kind: 'failed' };
 
 export type RunTrigger = 'save' | 'startup' | 'foreground' | 'connectivity' | 'manual' | 'timer';
 
@@ -128,6 +146,8 @@ export class SubmissionEngine {
   private rateLimitedUntil = 0;
   /** Written to Sheets in this process, but the local update failed. */
   private readonly remoteOnly = new Set<string>();
+  /** A save was confirmed since listeners last heard about settings (its timestamp lives there). */
+  private confirmedSinceNotify = false;
   private syncStatus: SyncStatus = { kind: 'idle' };
   private readonly syncListeners = new Set<(status: SyncStatus) => void>();
   private refreshInFlight: Promise<RefreshOutcome> | null = null;
@@ -161,7 +181,10 @@ export class SubmissionEngine {
     this.setSyncStatus({ kind: 'refreshing', progress: null });
     const run = this.serialize(async (): Promise<RefreshOutcome> => {
       try {
-        return await runRefresh(this.deps, (progress) => this.setSyncStatus({ kind: 'refreshing', progress }));
+        const outcome = await runRefresh(this.deps, (progress) => this.setSyncStatus({ kind: 'refreshing', progress }));
+        // A full refresh also restores category definitions (and backs up local ones).
+        if (outcome.kind === 'refreshed') await this.syncCategoryDefinitions(true);
+        return outcome;
       } catch {
         return { kind: 'failed', code: 'server_error' };
       }
@@ -219,6 +242,64 @@ export class SubmissionEngine {
     return submissionId === undefined ? null : this.outcomeOf(submissionId);
   }
 
+  /**
+   * Creates a category on this phone immediately (works offline), then asks
+   * for its definition to be backed up to the Categories tab. Never saves an
+   * expense. `registry` is the caller's current view, used to reject names
+   * that already exist; the database also refuses duplicates.
+   */
+  async createCategory(input: string, registry: CategoryRegistry): Promise<CreateCategoryOutcome> {
+    const validation = validateCategoryName(input, registry);
+    if (!validation.ok) {
+      return validation.error === 'duplicate'
+        ? { kind: 'duplicate', existing: validation.existing }
+        : { kind: 'invalid', error: validation.error };
+    }
+    let accountId: string | null = null;
+    try {
+      const settings = await getAppSettings(this.deps.db);
+      const scope = dataScopeOf(settings);
+      if (!isSetupComplete(settings) || scope === null) return { kind: 'failed' };
+      accountId = scope.accountId;
+      const category: CategoryDefinition = {
+        id: `custom-${this.deps.newId()}`,
+        name: validation.name,
+        icon: DEFAULT_CATEGORY_ICON,
+        colour: colourForName(validation.name),
+        source: 'custom',
+      };
+      await insertCustomCategory(this.deps.db, accountId, { ...category, createdAt: iso(this.deps.now()) });
+      notifyCategoriesChanged();
+      void this.syncCategories();
+      return { kind: 'created', category };
+    } catch (error) {
+      if (error instanceof DuplicateCategoryError && accountId !== null) {
+        // The caller's view was out of date: name the definition already stored.
+        const stored = (await listCustomCategories(this.deps.db, accountId)).find(
+          (c) => categoryKey(c.name) === categoryKey(validation.name),
+        );
+        if (stored === undefined) return { kind: 'failed' };
+        const existing: CategoryDefinition = {
+          id: stored.id,
+          name: stored.name,
+          icon: iconOrDefault(stored.icon),
+          colour: isCategoryColour(stored.colour) ? stored.colour : colourForName(stored.name),
+          source: 'custom',
+        };
+        return { kind: 'duplicate', existing };
+      }
+      return { kind: 'failed' };
+    }
+  }
+
+  /**
+   * Backs up category definitions created on this phone; with `restore`
+   * (after connecting Google) also brings back ones saved from other installs.
+   */
+  syncCategories(options: { readonly restore?: boolean } = {}): Promise<void> {
+    return this.serialize(() => this.syncCategoryDefinitions(options.restore === true));
+  }
+
   processQueue(trigger: RunTrigger): Promise<void> {
     return this.serialize(() => this.run(trigger)).then(() => undefined);
   }
@@ -245,13 +326,29 @@ export class SubmissionEngine {
     let nextRunAt: number | null = null;
     try {
       nextRunAt = await this.runSteps(trigger, focusId);
+      // Category definitions travel separately from expense rows; a failure
+      // here never affects saving, and is retried on the next run.
+      await this.syncCategoryDefinitions(false);
     } catch {
       // Unexpected local failure (e.g. storage). Nothing is lost: rows stay as persisted.
       nextRunAt = this.deps.now() + (BACKOFF_DELAYS_MS[1] ?? 30_000);
     } finally {
       notifySubmissionsChanged();
+      if (this.confirmedSinceNotify) {
+        this.confirmedSinceNotify = false;
+        notifySettingsChanged(); // last confirmed save time
+      }
     }
     this.scheduleListener?.(nextRunAt);
+  }
+
+  private async syncCategoryDefinitions(force: boolean): Promise<void> {
+    try {
+      const outcome = await syncCategories(this.deps, { force });
+      if (outcome.kind === 'synced') notifyCategoriesChanged();
+    } catch {
+      // Local storage problem: definitions stay waiting and are retried.
+    }
   }
 
   private async runSteps(trigger: RunTrigger, focusId?: string): Promise<number | null> {
@@ -336,7 +433,8 @@ export class SubmissionEngine {
       if (match !== undefined) {
         const remote = parseSheetRow(match, settings.currency.minorUnits);
         // Rebuild local state from what Google actually holds.
-        await confirmSubmission(this.deps.db, scope, item.submissionId, remote ?? item);
+        await confirmSubmission(this.deps.db, scope, item.submissionId, remote ?? item, iso(this.deps.now()));
+        this.confirmedSinceNotify = true;
         this.remoteOnly.delete(item.submissionId);
       } else if (now >= settledAt(item.lastAttemptAt)) {
         if (await transitionSubmission(this.deps.db, item.submissionId, 'uncertain', 'pending', null)) {
@@ -378,7 +476,8 @@ export class SubmissionEngine {
 
     // Google confirmed the append. Complete it locally in one transaction.
     try {
-      await confirmSubmission(db, scope, item.submissionId, item);
+      await confirmSubmission(db, scope, item.submissionId, item, iso(this.deps.now()));
+      this.confirmedSinceNotify = true;
     } catch {
       // The row stays 'sending'; the next run treats it as uncertain, finds the
       // Expense ID in the sheet and rebuilds the local record from it.

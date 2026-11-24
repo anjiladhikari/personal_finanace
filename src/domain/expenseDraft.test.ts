@@ -1,13 +1,28 @@
 import { parseLocalDate, type LocalDate } from './dates';
-import { EXPENSE_CATEGORIES } from './expense';
+import { BUILT_IN_REGISTRY, buildCategoryRegistry } from './categories';
 import { emptyDraft, validateExpenseDraft, type ExpenseDraft } from './expenseDraft';
 
 const today = parseLocalDate('2026-11-22') as LocalDate;
 const context = { minorUnits: 2, today };
 const valid: ExpenseDraft = { description: 'Coffee', amountText: '4.50', category: 'Eating out', purchaseDate: '2026-11-22' };
 
-test('initial categories', () => {
-  expect(EXPENSE_CATEGORIES).toEqual(['Groceries', 'Eating out', 'Transport', 'Bills', 'Shopping', 'Health', 'Other']);
+test('the original categories are still built in, with the same stored names', () => {
+  for (const name of ['Groceries', 'Eating out', 'Transport', 'Bills', 'Shopping', 'Health', 'Other']) {
+    expect(BUILT_IN_REGISTRY.isSelectable(name)).toBe(true);
+  }
+});
+
+test('the category must be one of the registry: built-in, custom or found in expenses', () => {
+  expect(validateExpenseDraft({ ...valid, category: 'Rent & mortgage' }, context)).toMatchObject({ ok: true });
+  expect(validateExpenseDraft({ ...valid, category: 'Kids’ swimming' }, context)).toMatchObject({ ok: false, errors: { category: 'missing' } });
+  const withCustom = buildCategoryRegistry([{ id: 'c1', name: 'Kids’ swimming', icon: 'tag', colour: 'blue' }], ['Typed in sheet']);
+  expect(validateExpenseDraft({ ...valid, category: 'Kids’ swimming' }, { ...context, categories: withCustom })).toMatchObject({
+    ok: true,
+    payload: { category: 'Kids’ swimming' },
+  });
+  expect(validateExpenseDraft({ ...valid, category: 'Typed in sheet' }, { ...context, categories: withCustom })).toMatchObject({ ok: true });
+  // A differently written name is not silently changed into the stored one.
+  expect(validateExpenseDraft({ ...valid, category: 'groceries' }, context)).toMatchObject({ ok: false });
 });
 
 test('an empty draft defaults the date to today and is invalid', () => {

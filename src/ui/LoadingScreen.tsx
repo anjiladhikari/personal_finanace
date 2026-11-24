@@ -1,20 +1,15 @@
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 
-import { colors } from './theme';
+import { useTheme } from './theme';
 
 export function LoadingScreen() {
+  const { colors } = useTheme();
   return (
-    <View style={styles.container} accessibilityLabel="Loading">
+    <View
+      style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}
+      accessibilityLabel="Loading"
+    >
       <ActivityIndicator size="large" color={colors.accent} />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.background,
-  },
-});

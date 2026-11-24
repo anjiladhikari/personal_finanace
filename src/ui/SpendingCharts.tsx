@@ -2,11 +2,13 @@ import { StyleSheet, Text, View } from 'react-native';
 import { PieChart } from 'react-native-gifted-charts';
 
 import { formatMoney, type CurrencyConfig } from '@/domain/money';
+import type { CategoryRegistry } from '@/domain/categories';
 import { REMAINING_CATEGORIES_LABEL, type ChartCategory, type PieSlice, type SpendingChart } from '@/domain/spendingChart';
 
-import { categoryColor, REMAINING_COLOR } from './categoryColors';
+import { categoryColor, remainingColor } from './categoryColors';
+import { useCategoryRegistry } from './CategoryRegistry';
 import { formatPercent, spokenPercent } from './spendingFormat';
-import { colors, spacing } from './theme';
+import { radii, spacing, typography, useTheme, useThemedStyles, type Scheme, type Theme } from './theme';
 
 /** Bars thinner than this would vanish for very small amounts. */
 const MIN_BAR_WIDTH = 3;
@@ -37,12 +39,13 @@ function sliceName(slice: PieSlice): string {
   return slice.kind === 'category' ? slice.category.category : REMAINING_CATEGORIES_LABEL;
 }
 
-function sliceColor(slice: PieSlice): string {
-  return slice.kind === 'category' ? categoryColor(slice.category.category) : REMAINING_COLOR;
+function sliceColor(slice: PieSlice, scheme: Scheme, registry: CategoryRegistry): string {
+  return slice.kind === 'category' ? categoryColor(slice.category.category, scheme, registry) : remainingColor(scheme);
 }
 
 /** Category name and exact amount; stacked on narrow screens or with large text. */
 function NameAndFigure({ name, value, compact }: { readonly name: string; readonly value: string; readonly compact: boolean }) {
+  const styles = useThemedStyles(makeStyles);
   return (
     <View style={[styles.text, compact ? styles.textStacked : styles.textInline]}>
       <Text style={[styles.name, !compact && styles.nameInline]}>{name}</Text>
@@ -56,6 +59,9 @@ function NameAndFigure({ name, value, compact }: { readonly name: string; readon
  * largest category spans the full width; every row prints its exact amount.
  */
 export function CategoryBars({ chart, currency, compact }: ChartProps) {
+  const styles = useThemedStyles(makeStyles);
+  const { scheme } = useTheme();
+  const registry = useCategoryRegistry();
   const largest = chart.categories[0]?.amountMinor ?? 0;
   return (
     <View testID="bar-chart">
@@ -72,7 +78,7 @@ export function CategoryBars({ chart, currency, compact }: ChartProps) {
             <View
               style={[
                 styles.bar,
-                { width: `${(row.barFraction * 100).toFixed(3)}%`, backgroundColor: categoryColor(row.category) },
+                { width: `${(row.barFraction * 100).toFixed(3)}%`, backgroundColor: categoryColor(row.category, scheme, registry) },
               ]}
               testID={`bar-${row.category}`}
             />
@@ -88,10 +94,14 @@ export function CategoryBars({ chart, currency, compact }: ChartProps) {
 }
 
 function Swatch({ color }: { readonly color: string }) {
+  const styles = useThemedStyles(makeStyles);
   return <View style={[styles.swatch, { backgroundColor: color }]} />;
 }
 
 function LegendRow({ row, currency, compact }: { readonly row: ChartCategory; readonly currency: CurrencyConfig; readonly compact: boolean }) {
+  const styles = useThemedStyles(makeStyles);
+  const { scheme } = useTheme();
+  const registry = useCategoryRegistry();
   return (
     <View
       accessible
@@ -99,7 +109,7 @@ function LegendRow({ row, currency, compact }: { readonly row: ChartCategory; re
       style={styles.legendRow}
       testID={`category-row-${row.category}`}
     >
-      <Swatch color={categoryColor(row.category)} />
+      <Swatch color={categoryColor(row.category, scheme, registry)} />
       <NameAndFigure name={row.category} value={figure(row.amountMinor, row.percentTenths, currency)} compact={compact} />
     </View>
   );
@@ -115,6 +125,8 @@ function RemainingGroup({
   readonly compact: boolean;
 }) {
   const count = slice.categories.length;
+  const styles = useThemedStyles(makeStyles);
+  const { scheme } = useTheme();
   return (
     <View>
       <View
@@ -123,7 +135,7 @@ function RemainingGroup({
         style={styles.legendRow}
         testID="pie-remaining"
       >
-        <Swatch color={REMAINING_COLOR} />
+        <Swatch color={remainingColor(scheme)} />
         <NameAndFigure name={REMAINING_CATEGORIES_LABEL} value={figure(slice.amountMinor, slice.percentTenths, currency)} compact={compact} />
       </View>
       <View style={styles.members}>
@@ -153,6 +165,9 @@ export function CategoryPie({ chart, currency, compact, radius }: ChartProps & {
     .map((slice) => `${sliceName(slice)} ${spokenPercent(sliceTenths(slice), sliceAmount(slice))}`)
     .join(', ');
   const single = chart.slices.length === 1;
+  const styles = useThemedStyles(makeStyles);
+  const { scheme, colors } = useTheme();
+  const registry = useCategoryRegistry();
   return (
     <View style={styles.pieBlock}>
       <View
@@ -164,7 +179,7 @@ export function CategoryPie({ chart, currency, compact, radius }: ChartProps & {
       >
         <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none">
           <PieChart
-            data={chart.slices.map((slice) => ({ value: sliceAmount(slice), color: sliceColor(slice) }))}
+            data={chart.slices.map((slice) => ({ value: sliceAmount(slice), color: sliceColor(slice, scheme, registry) }))}
             radius={radius}
             // A 2 px gap in the card colour separates neighbouring slices.
             strokeWidth={single ? 0 : 2}
@@ -186,49 +201,52 @@ export function CategoryPie({ chart, currency, compact, radius }: ChartProps & {
   );
 }
 
-const styles = StyleSheet.create({
-  barList: {
-    borderLeftWidth: 1,
-    borderLeftColor: colors.textMuted,
-    gap: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  barRow: { gap: spacing.xs },
-  bar: {
-    height: 16,
-    minWidth: MIN_BAR_WIDTH,
-    borderTopRightRadius: 4,
-    borderBottomRightRadius: 4,
-  },
-  scale: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingTop: spacing.xs,
-  },
-  scaleText: { fontSize: 13, color: colors.textMuted, fontVariant: ['tabular-nums'] },
-  // Grows beside a swatch; never flex: 1, which collapses inside a ScrollView column.
-  text: { flexGrow: 1, flexShrink: 1, paddingLeft: spacing.sm },
-  textStacked: { flexDirection: 'column' },
-  textInline: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', columnGap: spacing.md },
-  name: { fontSize: 16, color: colors.text },
-  nameInline: { flexShrink: 1 },
-  figure: { fontSize: 16, color: colors.text, fontVariant: ['tabular-nums'] },
-  pieBlock: { gap: spacing.md },
-  pie: { alignItems: 'center' },
-  legend: { gap: spacing.sm },
-  legendRow: { flexDirection: 'row', alignItems: 'center', minHeight: 32 },
-  swatch: { width: 14, height: 14, borderRadius: 3 },
-  members: {
-    marginLeft: 6,
-    marginTop: spacing.xs,
-    paddingLeft: spacing.sm,
-    borderLeftWidth: 1,
-    borderLeftColor: colors.border,
-    gap: spacing.xs,
-  },
-  memberRow: { minHeight: 28, justifyContent: 'center' },
-});
+function makeStyles({ colors }: Theme) {
+  return StyleSheet.create({
+    barList: {
+      borderLeftWidth: 1,
+      borderLeftColor: colors.chartAxis,
+      gap: spacing.lg,
+      paddingVertical: spacing.xs,
+    },
+    barRow: { gap: spacing.sm },
+    bar: {
+      height: 14,
+      minWidth: MIN_BAR_WIDTH,
+      borderTopRightRadius: 4,
+      borderBottomRightRadius: 4,
+    },
+    scale: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+      marginTop: spacing.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      paddingTop: spacing.xs,
+    },
+    scaleText: { ...typography.caption, color: colors.textMuted, fontVariant: ['tabular-nums'] },
+    // Grows beside a swatch; never flex: 1, which collapses inside a ScrollView column.
+    text: { flexGrow: 1, flexShrink: 1, paddingLeft: spacing.sm },
+    textStacked: { flexDirection: 'column' },
+    textInline: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', columnGap: spacing.md },
+    name: { ...typography.body, color: colors.text },
+    nameInline: { flexShrink: 1 },
+    figure: { ...typography.bodyStrong, color: colors.text, fontVariant: ['tabular-nums'] },
+    pieBlock: { gap: spacing.lg },
+    pie: { alignItems: 'center', paddingVertical: spacing.sm },
+    legend: { gap: spacing.sm },
+    legendRow: { flexDirection: 'row', alignItems: 'center', minHeight: 32 },
+    swatch: { width: 14, height: 14, borderRadius: radii.sm / 2 },
+    members: {
+      marginLeft: 6,
+      marginTop: spacing.xs,
+      paddingLeft: spacing.sm,
+      borderLeftWidth: 1,
+      borderLeftColor: colors.border,
+      gap: spacing.xs,
+    },
+    memberRow: { minHeight: 28, justifyContent: 'center' },
+  });
+}

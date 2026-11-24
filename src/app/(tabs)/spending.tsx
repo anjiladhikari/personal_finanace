@@ -25,24 +25,26 @@ import { formatMoney } from '@/domain/money';
 import { spendingChart } from '@/domain/spendingChart';
 import { useSubmissionEngine } from '@/sync/SubmissionEngineContext';
 import { Button } from '@/ui/Button';
+import { Icon, type IconName } from '@/ui/Icon';
+import { Segmented, type SegmentOption } from '@/ui/Segmented';
 import { CategoryBars, CategoryPie } from '@/ui/SpendingCharts';
-import { formatSyncTime, periodLabel, refreshFailureMessage, sheetIssueMessage } from '@/ui/spendingFormat';
-import { colors, spacing } from '@/ui/theme';
-import { useSpendingAnalysis, useSyncStatus } from '@/ui/useSpending';
+import { formatSyncTime, groupThousands, periodLabel, refreshFailureMessage, sheetIssueMessage } from '@/ui/spendingFormat';
+import { radii, spacing, TOUCH_TARGET, typography, useTheme, useThemedStyles, type Theme } from '@/ui/theme';
+import { usePendingCount, useSpendingAnalysis, useSyncStatus } from '@/ui/useSpending';
 import { useSpendingLayout, type SpendingLayout } from '@/ui/useSpendingLayout';
 
 type ChartType = 'bar' | 'pie';
 
-const KINDS: readonly { kind: PeriodKind; label: string }[] = [
-  { kind: 'day', label: 'Day' },
-  { kind: 'month', label: 'Month' },
-  { kind: 'year', label: 'Year' },
-  { kind: 'all', label: 'All time' },
+const KINDS: readonly SegmentOption<PeriodKind>[] = [
+  { value: 'day', label: 'Day' },
+  { value: 'month', label: 'Month' },
+  { value: 'year', label: 'Year' },
+  { value: 'all', label: 'All time' },
 ];
 
-const CHART_TYPES: readonly { type: ChartType; label: string }[] = [
-  { type: 'bar', label: 'Bar' },
-  { type: 'pie', label: 'Pie' },
+const CHART_TYPES: readonly SegmentOption<ChartType>[] = [
+  { value: 'bar', label: 'Bar', icon: 'bars' },
+  { value: 'pie', label: 'Pie', icon: 'pie' },
 ];
 
 const FIRST_PICKABLE = makeLocalDate(MIN_SUPPORTED_YEAR, 1, 1) as LocalDate;
@@ -71,35 +73,15 @@ function neighbour(period: Period, steps: number): Period | null {
   }
 }
 
-function PeriodKinds({ period, compact, onChange }: { readonly period: Period; readonly compact: boolean; readonly onChange: (period: Period) => void }) {
-  return (
-    <View style={styles.segments} accessibilityRole="radiogroup" accessibilityLabel="Period">
-      {KINDS.map(({ kind, label }) => {
-        const selected = period.kind === kind;
-        return (
-          <Pressable
-            key={kind}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: selected }}
-            onPress={() => onChange(periodContaining(kind, anchorOf(period)))}
-            style={[styles.segment, compact && styles.segmentGrid, selected && styles.segmentSelected]}
-            testID={`period-${kind}`}
-          >
-            <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>{label}</Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-function StepButton({ symbol, label, target, onChange, testID }: {
-  readonly symbol: string;
+function StepButton({ icon, label, target, onChange, testID }: {
+  readonly icon: IconName;
   readonly label: string;
   readonly target: Period | null;
   readonly onChange: (period: Period) => void;
   readonly testID: string;
 }) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   return (
     <Pressable
       accessibilityRole="button"
@@ -107,39 +89,56 @@ function StepButton({ symbol, label, target, onChange, testID }: {
       accessibilityState={{ disabled: target === null }}
       disabled={target === null}
       onPress={() => target !== null && onChange(target)}
-      style={[styles.step, target === null && styles.dimmed]}
+      style={({ pressed }) => [styles.step, pressed && styles.pressed, target === null && styles.dimmed]}
       testID={testID}
     >
-      <Text style={styles.stepText}>{symbol}</Text>
+      <Icon name={icon} color={colors.accent} size={24} />
     </Pressable>
   );
 }
 
-/** Previous / choose / next for day, month and year. All time needs no picker. */
-function PeriodPicker({ period, onChange }: { readonly period: Period; readonly onChange: (period: Period) => void }) {
+/**
+ * One row: previous, the selected period (tap to pick a date), next.
+ * All time has no neighbours, so only its name is shown.
+ */
+function PeriodNavigator({ period, onChange }: { readonly period: Period; readonly onChange: (period: Period) => void }) {
   const [picking, setPicking] = useState(false);
-  if (period.kind === 'all') return null;
-  const kind = period.kind;
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
+  const label = periodLabel(period);
 
+  if (period.kind === 'all') {
+    return (
+      <View style={styles.navRow} testID="period-nav">
+        <Text style={styles.navLabelStatic} accessibilityRole="header" testID="period-label">
+          {label}
+        </Text>
+      </View>
+    );
+  }
+  const kind = period.kind;
   const onPicked = (_event: unknown, picked: Date) => {
     setPicking(false);
     onChange(periodContaining(kind, todayLocalDate(picked)));
   };
 
   return (
-    <View style={styles.stepper}>
-      <StepButton symbol="‹" label={`Previous ${kind}`} target={neighbour(period, -1)} onChange={onChange} testID="period-previous" />
+    <View style={styles.navRow} testID="period-nav">
+      <StepButton icon="chevron-left" label={`Previous ${kind}`} target={neighbour(period, -1)} onChange={onChange} testID="period-previous" />
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Choose ${kind}`}
+        accessibilityLabel={`${label}. Choose ${kind}`}
         accessibilityHint={kind === 'day' ? 'Opens a calendar' : `Opens a calendar; the ${kind} of the date you pick is shown`}
         onPress={() => setPicking(true)}
-        style={styles.choose}
+        style={({ pressed }) => [styles.navLabelButton, pressed && styles.pressed]}
         testID="period-choose"
       >
-        <Text style={styles.chooseText}>Choose {kind}</Text>
+        <Text style={styles.navLabel} testID="period-label">
+          {label}
+        </Text>
+        <Icon name="chevron-down" color={colors.textMuted} size={18} />
       </Pressable>
-      <StepButton symbol="›" label={`Next ${kind}`} target={neighbour(period, 1)} onChange={onChange} testID="period-next" />
+      <StepButton icon="chevron-right" label={`Next ${kind}`} target={neighbour(period, 1)} onChange={onChange} testID="period-next" />
       {picking ? (
         <DateTimePicker
           value={toPickerDate(anchorOf(period))}
@@ -155,41 +154,21 @@ function PeriodPicker({ period, onChange }: { readonly period: Period; readonly 
   );
 }
 
-function ChartToggle({ value, onChange }: { readonly value: ChartType; readonly onChange: (type: ChartType) => void }) {
-  return (
-    <View style={styles.segments} accessibilityRole="radiogroup" accessibilityLabel="Chart type">
-      {CHART_TYPES.map(({ type, label }) => {
-        const selected = value === type;
-        return (
-          <Pressable
-            key={type}
-            accessibilityRole="radio"
-            accessibilityState={{ checked: selected }}
-            onPress={() => onChange(type)}
-            style={[styles.segment, selected && styles.segmentSelected]}
-            testID={`chart-${type}`}
-          >
-            <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>{label}</Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
-
-function Notice({ text, testID, busy = false }: { readonly text: string; readonly testID: string; readonly busy?: boolean }) {
+function Notice({ text, testID, busy = false, icon }: { readonly text: string; readonly testID: string; readonly busy?: boolean; readonly icon?: IconName }) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   return (
     <View style={styles.notice} testID={testID} accessibilityLiveRegion="polite">
-      {busy ? <ActivityIndicator color={colors.accent} /> : null}
+      {busy ? <ActivityIndicator color={colors.accent} /> : icon === undefined ? null : <Icon name={icon} color={colors.textMuted} size={28} />}
       <Text style={styles.noticeText}>{text}</Text>
     </View>
   );
 }
 
 /**
- * Selected period, total, chart toggle and chart. Everything here comes from
- * one analysis result, so the period, total, bars, slices and percentages
- * always describe the same query.
+ * Total, then the category breakdown. Everything here comes from one
+ * analysis result, so the total, bars, slices and percentages always
+ * describe the same query.
  */
 function Results({ scope, settings, period, chartType, onChartType, layout }: {
   readonly scope: DataScope;
@@ -202,18 +181,20 @@ function Results({ scope, settings, period, chartType, onChartType, layout }: {
   const state = useSpendingAnalysis(scope, period);
   const engine = useSubmissionEngine();
   const status = useSyncStatus(engine);
+  const styles = useThemedStyles(makeStyles);
   const analysis = state.status === 'ready' ? state.analysis : null;
   const chart = useMemo(() => (analysis === null ? null : spendingChart(analysis)), [analysis]);
 
   if (state.status === 'loading') return <Notice text="Loading saved expenses…" testID="spending-loading" busy />;
   if (state.status === 'error' || analysis === null || chart === null) {
-    return <Notice text="Couldn’t read the expenses saved on this phone. Close and reopen the app to try again." testID="spending-error" />;
+    return <Notice text="Couldn’t read the expenses saved on this phone. Close and reopen the app to try again." testID="spending-error" icon="alert" />;
   }
 
   const currency = settings.currency;
   const total = formatMoney(chart.totalMinor, currency);
   const blocking = state.issues.filter((issue) => issue.kind !== 'duplicate_resolved');
   const neverLoaded = analysis.lastSuccessfulSyncAt === null;
+  const single = chart.categories.length === 1 ? chart.categories[0] : undefined;
 
   let empty: ReactNode = null;
   if (chart.categories.length === 0) {
@@ -221,38 +202,44 @@ function Results({ scope, settings, period, chartType, onChartType, layout }: {
       neverLoaded && status.kind === 'refreshing' ? (
         <Notice text="Loading your expenses from Google Sheets…" testID="spending-empty" busy />
       ) : neverLoaded ? (
-        <Notice text="Your Google Sheet hasn’t been loaded yet. Use Refresh below to load it." testID="spending-empty" />
+        <Notice text="Your Google Sheet hasn’t been loaded yet. Use Refresh below to load it." testID="spending-empty" icon="refresh" />
       ) : (
-        <Notice text="No confirmed expenses in this period." testID="spending-empty" />
+        <Notice text="No confirmed expenses in this period." testID="spending-empty" icon="chart" />
       );
   }
 
   return (
     <View style={styles.results} testID="spending-results">
-      <View style={styles.summary} accessibilityLiveRegion="polite">
-        <Text style={styles.periodLabel} accessibilityRole="header" testID="period-label">
-          {periodLabel(analysis.period)}
+      <View style={styles.hero} accessible accessibilityLabel={`Total spent, ${periodLabel(analysis.period)}: ${total}`} accessibilityLiveRegion="polite">
+        <Text style={styles.heroLabel}>Total spent</Text>
+        <Text style={styles.heroAmount} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.5} maxFontSizeMultiplier={1.5} testID="period-total">
+          {total}
         </Text>
-        <View accessible accessibilityLabel={`Total spent ${total}`}>
-          <Text style={styles.totalLabel}>Total spent</Text>
-          <Text style={styles.total} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.5} testID="period-total">
-            {total}
-          </Text>
-        </View>
       </View>
 
-      {empty ?? (
-        <>
-          <ChartToggle value={chartType} onChange={onChartType} />
-          <View style={styles.card}>
-            {chartType === 'bar' ? (
-              <CategoryBars chart={chart} currency={currency} compact={layout.compact} />
-            ) : (
-              <CategoryPie chart={chart} currency={currency} compact={layout.compact} radius={layout.pieRadius} />
-            )}
-          </View>
-        </>
-      )}
+      <View style={styles.card} testID="breakdown-card">
+        <View style={[styles.cardHeader, layout.compact && styles.cardHeaderStacked]}>
+          <Text style={styles.cardTitle} accessibilityRole="header">
+            By category
+          </Text>
+          {empty === null ? (
+            <View style={layout.compact ? undefined : styles.chartToggle}>
+              <Segmented options={CHART_TYPES} value={chartType} onChange={onChartType} accessibilityLabel="Chart type" testIDPrefix="chart" />
+            </View>
+          ) : null}
+        </View>
+        {empty ??
+          (chartType === 'bar' ? (
+            <CategoryBars chart={chart} currency={currency} compact={layout.compact} />
+          ) : (
+            <CategoryPie chart={chart} currency={currency} compact={layout.compact} radius={layout.pieRadius} />
+          ))}
+        {single === undefined ? null : (
+          <Text style={styles.cardNote} testID="single-category-note">
+            All spending in this period is in {single.category}.
+          </Text>
+        )}
+      </View>
 
       {analysis.excludedRowCount > 0 ? (
         <View style={styles.issues} testID="sheet-issues">
@@ -270,42 +257,84 @@ function Results({ scope, settings, period, chartType, onChartType, layout }: {
   );
 }
 
-function SyncBar({ settings }: { readonly settings: AppSettings }) {
+function StatusRow({ icon, title, children, tone = 'normal' }: {
+  readonly icon: IconName;
+  readonly title: string;
+  readonly children: ReactNode;
+  readonly tone?: 'normal' | 'error';
+}) {
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
+  return (
+    <View style={styles.statusRow}>
+      <Icon name={icon} color={tone === 'error' ? colors.danger : colors.accent} size={22} />
+      <View style={styles.statusText}>
+        <Text style={styles.statusTitle}>{title}</Text>
+        {children}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Saves from this phone and full-history refreshes are separate: each has
+ * its own state and its own last-success time.
+ */
+function SyncStatusCard({ settings, scope }: { readonly settings: AppSettings; readonly scope: DataScope }) {
   const engine = useSubmissionEngine();
   const status = useSyncStatus(engine);
+  const pending = usePendingCount(scope);
+  const styles = useThemedStyles(makeStyles);
+  const { colors } = useTheme();
   const refreshing = status.kind === 'refreshing';
 
-  let line: string;
+  let refreshLine: string;
   if (refreshing) {
     const progress = status.progress;
-    line =
+    refreshLine =
       progress === null || progress.rowsRead === 0
         ? 'Refreshing from Google Sheets…'
-        : `Refreshing… ${progress.rowsRead}${progress.totalRows === null ? '' : ` of ${progress.totalRows - 1}`} rows read`;
+        : `Refreshing… ${groupThousands(progress.rowsRead)}${progress.totalRows === null ? '' : ` of ${groupThousands(progress.totalRows - 1)}`} rows read`;
   } else if (status.kind === 'failed') {
-    line = refreshFailureMessage(status.code);
+    refreshLine = refreshFailureMessage(status.code);
   } else {
-    line =
+    refreshLine =
       settings.lastSuccessfulSyncAt === null
         ? 'Not refreshed yet.'
-        : `Showing saved results. Last refreshed ${formatSyncTime(settings.lastSuccessfulSyncAt)}.`;
+        : `Last refreshed ${formatSyncTime(settings.lastSuccessfulSyncAt)}. Showing saved results.`;
   }
 
+  const saveLine =
+    pending !== null && pending > 0
+      ? `${pending} expense${pending === 1 ? '' : 's'} waiting to be sent to Google Sheets.`
+      : settings.lastConfirmedSaveAt === null
+        ? 'No expenses saved from this phone yet.'
+        : `All sent. Last confirmed ${formatSyncTime(settings.lastConfirmedSaveAt)}.`;
+
   return (
-    <View style={styles.syncBar}>
-      <View style={styles.syncLine}>
-        {refreshing ? <ActivityIndicator color={colors.accent} testID="sync-busy" /> : null}
-        <Text style={[styles.syncText, status.kind === 'failed' && styles.syncError]} accessibilityLiveRegion="polite" testID="sync-status">
-          {line}
+    <View style={styles.card} testID="sync-card">
+      <StatusRow icon={pending !== null && pending > 0 ? 'clock' : 'check-circle'} title="Saves from this phone">
+        <Text style={styles.statusBody} accessibilityLiveRegion="polite" testID="save-status">
+          {saveLine}
         </Text>
-      </View>
-      {status.kind === 'failed' && settings.lastSuccessfulSyncAt !== null ? (
-        <Text style={styles.syncText} testID="last-refresh">
-          Last successful refresh {formatSyncTime(settings.lastSuccessfulSyncAt)}.
-        </Text>
-      ) : null}
+      </StatusRow>
+      <View style={styles.divider} />
+      <StatusRow icon={status.kind === 'failed' ? 'alert' : 'refresh'} title="Full history from Google Sheets" tone={status.kind === 'failed' ? 'error' : 'normal'}>
+        <View style={styles.syncLine}>
+          {refreshing ? <ActivityIndicator color={colors.accent} testID="sync-busy" /> : null}
+          <Text style={[styles.statusBody, status.kind === 'failed' && styles.statusError]} accessibilityLiveRegion="polite" testID="sync-status">
+            {refreshLine}
+          </Text>
+        </View>
+        {status.kind === 'failed' && settings.lastSuccessfulSyncAt !== null ? (
+          <Text style={styles.statusBody} testID="last-refresh">
+            Last successful refresh {formatSyncTime(settings.lastSuccessfulSyncAt)}.
+          </Text>
+        ) : null}
+      </StatusRow>
       <Button
         variant="secondary"
+        icon="refresh"
         label={refreshing ? 'Refreshing…' : 'Refresh'}
         onPress={() => void engine.refresh()}
         disabled={refreshing}
@@ -329,6 +358,7 @@ export default function MySpendingScreen() {
   const [period, setPeriod] = useState<Period>(() => periodContaining('month', todayLocalDate()));
   const [chartType, setChartType] = useState<ChartType>('bar');
   const layout = useSpendingLayout();
+  const styles = useThemedStyles(makeStyles);
   const firstLoadChecked = useRef(false);
 
   useEffect(() => {
@@ -341,79 +371,78 @@ export default function MySpendingScreen() {
   }, [db, engine, settings, scope]);
 
   return (
-    <ScrollView contentContainerStyle={styles.content} testID="my-spending-screen">
+    <ScrollView style={styles.screen} contentContainerStyle={styles.content} testID="my-spending-screen">
       {settingsState.status === 'error' ? (
-        <Notice text="Couldn’t read this phone’s settings. Close and reopen the app to try again." testID="spending-error" />
+        <Notice text="Couldn’t read this phone’s settings. Close and reopen the app to try again." testID="spending-error" icon="alert" />
       ) : settings === null || scope === null ? (
         <Notice text="Loading saved expenses…" testID="spending-loading" busy />
       ) : (
         <>
-          <PeriodKinds period={period} compact={layout.compact} onChange={setPeriod} />
-          <PeriodPicker period={period} onChange={setPeriod} />
+          <Segmented
+            options={KINDS}
+            value={period.kind}
+            onChange={(kind) => setPeriod(periodContaining(kind, anchorOf(period)))}
+            accessibilityLabel="Period"
+            wrap={layout.compact}
+            testIDPrefix="period"
+          />
+          <PeriodNavigator period={period} onChange={setPeriod} />
           <Results scope={scope} settings={settings} period={period} chartType={chartType} onChartType={setChartType} layout={layout} />
-          <SyncBar settings={settings} />
+          <SyncStatusCard settings={settings} scope={scope} />
         </>
       )}
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  content: { padding: spacing.md, paddingBottom: spacing.lg, gap: spacing.md },
-  segments: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
-  segment: {
-    flexGrow: 1,
-    flexBasis: 0,
-    minHeight: 48,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Two per row on narrow screens or with large text.
-  segmentGrid: { flexBasis: '45%' },
-  segmentSelected: { backgroundColor: colors.accent, borderColor: colors.accent },
-  segmentText: { fontSize: 15, color: colors.text, textAlign: 'center' },
-  segmentTextSelected: { color: '#FFFFFF', fontWeight: '600' },
-  stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
-  step: { minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
-  stepText: { fontSize: 28, color: colors.accent },
-  dimmed: { opacity: 0.4 },
-  choose: {
-    flexShrink: 1,
-    minHeight: 48,
-    paddingHorizontal: spacing.md,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chooseText: { fontSize: 16, color: colors.accent, fontWeight: '600', textAlign: 'center' },
-  results: { gap: spacing.md },
-  summary: { gap: spacing.xs },
-  periodLabel: { fontSize: 20, fontWeight: '700', color: colors.text },
-  totalLabel: { fontSize: 15, color: colors.textMuted },
-  total: { fontSize: 32, fontWeight: '700', color: colors.text, fontVariant: ['tabular-nums'] },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    padding: spacing.md,
-  },
-  notice: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.sm },
-  noticeText: { flexShrink: 1, fontSize: 15, color: colors.textMuted },
-  syncBar: { gap: spacing.sm, paddingTop: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  syncLine: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  syncText: { flexShrink: 1, fontSize: 14, color: colors.textMuted },
-  syncError: { color: '#C62828' },
-  issues: { backgroundColor: '#FFF4E5', borderRadius: 10, padding: spacing.md, gap: spacing.xs },
-  issuesTitle: { fontSize: 15, fontWeight: '600', color: colors.text },
-  issue: { fontSize: 14, color: colors.textMuted },
-});
+function makeStyles({ colors }: Theme) {
+  return StyleSheet.create({
+    screen: { backgroundColor: colors.background },
+    content: { padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.lg },
+    navRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.xs, minHeight: TOUCH_TARGET },
+    step: { width: TOUCH_TARGET, height: TOUCH_TARGET, borderRadius: radii.pill, alignItems: 'center', justifyContent: 'center' },
+    pressed: { backgroundColor: colors.surfaceMuted },
+    dimmed: { opacity: 0.35 },
+    navLabelButton: {
+      flexShrink: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.xs,
+      minHeight: TOUCH_TARGET,
+      paddingHorizontal: spacing.md,
+      borderRadius: radii.pill,
+    },
+    navLabel: { ...typography.title, fontSize: 18, lineHeight: 24, color: colors.text, textAlign: 'center', flexShrink: 1 },
+    navLabelStatic: { ...typography.title, color: colors.text, textAlign: 'center' },
+    results: { gap: spacing.lg },
+    hero: { alignItems: 'center', gap: spacing.xs, paddingVertical: spacing.sm },
+    heroLabel: { ...typography.label, color: colors.textMuted },
+    heroAmount: { ...typography.display, color: colors.text, fontVariant: ['tabular-nums'] },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: radii.lg,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      padding: spacing.lg,
+      gap: spacing.lg,
+    },
+    cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
+    cardHeaderStacked: { flexDirection: 'column', alignItems: 'stretch' },
+    cardTitle: { ...typography.bodyStrong, color: colors.text },
+    chartToggle: { minWidth: 168 },
+    cardNote: { ...typography.caption, color: colors.textMuted },
+    notice: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.md },
+    noticeText: { ...typography.body, fontSize: 15, color: colors.textMuted, flexShrink: 1 },
+    issues: { backgroundColor: colors.warningSoft, borderRadius: radii.md, padding: spacing.lg, gap: spacing.xs },
+    issuesTitle: { ...typography.label, fontWeight: '600', color: colors.text },
+    issue: { ...typography.caption, color: colors.textMuted },
+    statusRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
+    statusText: { flexShrink: 1, flexGrow: 1, gap: 2 },
+    statusTitle: { ...typography.label, fontWeight: '600', color: colors.text },
+    statusBody: { ...typography.caption, color: colors.textMuted, flexShrink: 1 },
+    statusError: { color: colors.danger },
+    syncLine: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+    divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
+  });
+}

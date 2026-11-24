@@ -5,7 +5,7 @@ import type { pieDataItem } from 'react-native-gifted-charts';
 import { breakdownByCategory } from '@/domain/analysis';
 import { DEFAULT_CURRENCY } from '@/domain/money';
 import { spendingChart } from '@/domain/spendingChart';
-import { categoryColor, REMAINING_COLOR } from '@/ui/categoryColors';
+import { categoryColor, remainingColor } from '@/ui/categoryColors';
 import { CategoryBars, CategoryPie } from '@/ui/SpendingCharts';
 import { spendingLayout } from '@/ui/useSpendingLayout';
 
@@ -62,7 +62,7 @@ describe('bar chart', () => {
 
   test('one category fills the scale', async () => {
     await render(<CategoryBars chart={chartOf({ Bills: 12_345 })} currency={DEFAULT_CURRENCY} compact={false} />);
-    expect(screen.getByTestId('category-row-Bills')).toHaveTextContent('Bills$123.45 · 100%');
+    expect(screen.getByTestId('category-row-Bills')).toHaveTextContent('Bills$123.45 · 100.0%');
     expect(barWidth('Bills')).toBe('100.000%');
   });
 
@@ -74,7 +74,7 @@ describe('bar chart', () => {
 
   test('very unequal amounts: tiny bars stay visible and read "<0.1%", money stays exact', async () => {
     await render(<CategoryBars chart={chartOf({ Rent: 99_999_998, Gum: 1, Stamp: 1 })} currency={DEFAULT_CURRENCY} compact={false} />);
-    expect(screen.getByTestId('category-row-Rent')).toHaveTextContent('Rent$999,999.98 · 100%');
+    expect(screen.getByTestId('category-row-Rent')).toHaveTextContent('Rent$999,999.98 · 100.0%');
     expect(screen.getByTestId('category-row-Gum')).toHaveTextContent('Gum$0.01 · <0.1%');
     expect(screen.getByLabelText('Gum: $0.01, less than 0.1 percent of total spent')).toBeOnTheScreen();
     expect(StyleSheet.flatten(screen.getByTestId('bar-Gum').props.style).minWidth).toBeGreaterThanOrEqual(3);
@@ -117,7 +117,7 @@ describe('pie chart', () => {
       { value: 60_000, color: categoryColor('Groceries') },
       { value: 50_000, color: categoryColor('Transport') },
       { value: 40_000, color: categoryColor('Health') },
-      { value: 60_000, color: REMAINING_COLOR },
+      { value: 60_000, color: remainingColor() },
     ]);
     expect(screen.getByTestId('pie-remaining')).toHaveTextContent('Remaining categories$600.00 · 21.4%');
     const breakdown = screen.getByTestId('pie-breakdown');
@@ -166,7 +166,7 @@ describe('narrow screens and large text', () => {
     const nameAndAmount = screen.getByText(LONG).parent;
     expect(nameAndAmount).not.toBeNull();
     expect(nameAndAmount).toHaveStyle({ flexDirection: 'column' });
-    expect(within(screen.getByTestId(`category-row-${LONG}`)).getByText('$40.00 · 80%')).toBeOnTheScreen();
+    expect(within(screen.getByTestId(`category-row-${LONG}`)).getByText('$40.00 · 80.0%')).toBeOnTheScreen();
     expect(layout.pieRadius * 2).toBeLessThanOrEqual(320 - 64);
   });
 });

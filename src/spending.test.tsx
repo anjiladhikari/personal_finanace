@@ -130,7 +130,7 @@ test('cached results show immediately without contacting Google', async () => {
   expect(screen.getByTestId('period-total')).toHaveTextContent('$750.00');
   expect(screen.getByTestId('category-row-Bills')).toHaveTextContent(/\$500\.00 · 66\.7%/);
   expect(screen.getByTestId('category-row-Groceries')).toHaveTextContent(/\$250\.00 · 33\.3%/);
-  expect(screen.getByTestId('sync-status')).toHaveTextContent(`Showing saved results. Last refreshed ${formatSyncTime('2026-11-20T09:30:00.000Z')}.`);
+  expect(screen.getByTestId('sync-status')).toHaveTextContent(`Last refreshed ${formatSyncTime('2026-11-20T09:30:00.000Z')}. Showing saved results.`);
   expect(google.log).toHaveLength(0);
 });
 
@@ -314,7 +314,7 @@ test('the first visit with an empty cache loads the sheet', async () => {
   await openMySpending();
 
   expect(await screen.findByText('$86.20')).toBeOnTheScreen();
-  expect(screen.getByTestId('sync-status')).toHaveTextContent(`Showing saved results. Last refreshed ${formatSyncTime('2026-11-22T03:04:00.000Z')}.`);
+  expect(screen.getByTestId('sync-status')).toHaveTextContent(`Last refreshed ${formatSyncTime('2026-11-22T03:04:00.000Z')}. Showing saved results.`);
 });
 
 test('Refresh shows corrections and deletions made in Google Sheets', async () => {
@@ -366,8 +366,10 @@ test('a narrow Android phone with the largest system text gets the compact layou
   await seedCache();
   await openMySpending();
 
-  // Period buttons wrap into two rows instead of squeezing four across.
-  expect(screen.getByTestId('period-month')).toHaveStyle({ flexBasis: '45%', minHeight: 48 });
+  // Period buttons wrap into two rows instead of squeezing four across;
+  // 40 dp segments with 4 dp of hit slop above and below keep a 48 dp target.
+  expect(screen.getByTestId('period-month')).toHaveStyle({ flexBasis: '45%', minHeight: 40 });
+  expect(screen.getByTestId('period-month').props.hitSlop).toEqual({ top: 4, bottom: 4 });
   // Name and amount stack, so neither is cut off.
   expect(screen.getByText('Groceries').parent).toHaveStyle({ flexDirection: 'column' });
   // The total shrinks to fit on one line rather than overflowing.

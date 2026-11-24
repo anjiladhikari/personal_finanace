@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDatabase } from '@/db/DatabaseContext';
 import { useGoogleServices } from '@/google/GoogleServicesContext';
 import { connectGoogle, type ConnectionRequest, type ConnectionState } from '@/sync/connection';
+import { useSubmissionEngine } from '@/sync/SubmissionEngineContext';
 
 export type ConnectionUiState =
   | { readonly status: 'idle' }
@@ -13,6 +14,7 @@ export type ConnectionUiState =
 export function useGoogleConnection() {
   const db = useDatabase();
   const services = useGoogleServices();
+  const engine = useSubmissionEngine();
   const [ui, setUi] = useState<ConnectionUiState>({ status: 'idle' });
   const running = useRef(false);
   const mounted = useRef(true);
@@ -32,12 +34,14 @@ export function useGoogleConnection() {
       try {
         const result = await connectGoogle({ db, ...services }, request);
         if (mounted.current) setUi({ status: 'done', result });
+        // Bring back categories saved from an earlier install (in the background).
+        if (result.kind === 'ready') void engine.syncCategories({ restore: true });
         return result;
       } finally {
         running.current = false;
       }
     },
-    [db, services],
+    [db, services, engine],
   );
 
   return { ui, run };

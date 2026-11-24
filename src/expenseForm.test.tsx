@@ -15,6 +15,7 @@ import { GoogleServicesProvider } from '@/google/GoogleServicesContext';
 import type { GoogleServices } from '@/google/services';
 import { connectGoogle } from '@/sync/connection';
 import { SubmissionEngineProvider } from '@/sync/SubmissionEngineContext';
+import { purchaseDateLabel } from '@/ui/spendingFormat';
 import { useExpenseForm } from '@/ui/useExpenseForm';
 
 let mockDatabase: SqlDatabase | null = null;
@@ -83,10 +84,14 @@ describe('form', () => {
     const amount = await screen.findByLabelText('Amount in AUD');
     expect(amount).toHaveProp('keyboardType', 'decimal-pad');
     expect(screen.getByLabelText('Description')).toBeOnTheScreen();
-    for (const category of ['Groceries', 'Eating out', 'Transport', 'Bills', 'Shopping', 'Health', 'Other']) {
+    // Before any history: the six defaults as quick chips, then "See more" for everything else.
+    for (const category of ['Groceries', 'Eating out', 'Transport', 'Bills', 'Shopping', 'Health']) {
       expect(screen.getByRole('radio', { name: category })).toBeOnTheScreen();
     }
-    expect(screen.getByTestId('date-button')).toHaveTextContent(`Today (${todayLocalDate()})`);
+    expect(screen.queryByRole('radio', { name: 'Other' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'See more categories' })).toBeOnTheScreen();
+    expect(screen.getByTestId('date-button')).toHaveTextContent(purchaseDateLabel(todayLocalDate(), todayLocalDate()));
+    expect(screen.getByTestId('date-button')).toHaveTextContent(/^Today · [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d{4}$/);
     expect(screen.getAllByRole('button', { name: 'Save expense' })).toHaveLength(1);
   });
 
