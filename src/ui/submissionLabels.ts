@@ -18,7 +18,7 @@ export function submissionStatusLabel(state: SubmissionState, error: SubmissionE
         case 'sheet_trashed':
           return 'The spreadsheet is in the Google Drive trash. Check Account.';
         case 'sheet_structure_changed':
-          return 'The Expenses header row has changed. Check Account.';
+          return 'The header row of this year’s tab has changed. Fix it in Google Sheets, then retry.';
         case 'invalid_request':
           return 'Google Sheets rejected this row.';
         default:

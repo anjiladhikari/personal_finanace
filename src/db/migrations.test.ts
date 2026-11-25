@@ -43,6 +43,7 @@ describe('migrateDatabase', () => {
       'pending_submissions_scope_date',
       'pending_submissions_spreadsheet_same_account',
       'pending_submissions_state',
+      'pending_tab_sorts',
       'sheet_issues',
     ]);
   });
@@ -184,10 +185,15 @@ describe('upgrading an existing v1 database', () => {
     );
     testDb.raw.prepare("UPDATE app_settings SET last_successful_sync_at = '2026-11-20T09:30:00.000Z' WHERE id = 1").run();
 
-    expect(await migrateDatabase(testDb.db)).toEqual({ fromVersion: 3, toVersion: LATEST_SCHEMA_VERSION, applied: LATEST_SCHEMA_VERSION - 3 });
-    expect(await getAppSettings(testDb.db)).toMatchObject({
-      lastSuccessfulSyncAt: '2026-11-20T09:30:00.000Z',
-      lastConfirmedSaveAt: null,
+    expect(
+      await migrateDatabase(
+        testDb.db,
+        MIGRATIONS.filter((m) => m.version <= 4),
+      ),
+    ).toEqual({ fromVersion: 3, toVersion: 4, applied: 1 });
+    expect(testDb.raw.prepare('SELECT last_successful_sync_at, last_confirmed_save_at FROM app_settings WHERE id = 1').get()).toEqual({
+      last_successful_sync_at: '2026-11-20T09:30:00.000Z',
+      last_confirmed_save_at: null,
     });
     expect(() => testDb.raw.prepare("UPDATE app_settings SET last_confirmed_save_at = '' WHERE id = 1").run()).toThrow();
   });
@@ -204,7 +210,12 @@ describe('upgrading an existing v1 database', () => {
       )
       .run();
 
-    expect(await migrateDatabase(testDb.db)).toEqual({ fromVersion: 4, toVersion: 5, applied: 1 });
+    expect(
+      await migrateDatabase(
+        testDb.db,
+        MIGRATIONS.filter((m) => m.version <= 5),
+      ),
+    ).toEqual({ fromVersion: 4, toVersion: 5, applied: 1 });
     expect(testDb.raw.prepare('SELECT COUNT(*) AS n FROM categories').get()).toEqual({ n: 0 });
     expect(testDb.raw.prepare('SELECT category FROM confirmed_expenses ORDER BY expense_id').all()).toEqual([
       { category: 'Bills' },
@@ -217,5 +228,43 @@ describe('upgrading an existing v1 database', () => {
     insert.run('c1', 'Kids', 'kids');
     expect(() => insert.run('c2', 'KIDS', 'kids')).toThrow(/UNIQUE/);
     expect(() => insert.run('c3', 'x'.repeat(31), 'x'.repeat(31))).toThrow(/CHECK/);
+  });
+
+  test('v6 (yearly tabs) drops the cache built from the old Expenses tab; pending saves and categories stay', async () => {
+    await migrateDatabase(
+      testDb.db,
+      MIGRATIONS.filter((m) => m.version <= 5),
+    );
+    testDb.raw.prepare("UPDATE app_settings SET google_account_id = 'acct-1', last_successful_sync_at = '2026-11-20T09:30:00.000Z' WHERE id = 1").run();
+    testDb.raw
+      .prepare(
+        `INSERT INTO confirmed_expenses (expense_id, account_id, spreadsheet_id, purchase_date, description, amount_minor, category)
+         VALUES ('old-test', 'acct-1', 'sheet-1', '2026-11-01', 'From the old worksheet', 500, 'Bills')`,
+      )
+      .run();
+    testDb.raw
+      .prepare(
+        `INSERT INTO pending_submissions
+           (submission_id, account_id, spreadsheet_id, purchase_date, description, amount_minor, category, created_at)
+         VALUES ('waiting', 'acct-1', 'sheet-1', '2026-11-22', 'Coffee', 450, 'Eating out', '2026-11-22T01:02:03.000Z')`,
+      )
+      .run();
+    testDb.raw
+      .prepare(`INSERT INTO categories (category_id, account_id, name, name_key, icon, colour, created_at) VALUES ('c1', 'acct-1', 'Kids', 'kids', 'tag', 'red', 'x')`)
+      .run();
+
+    expect(await migrateDatabase(testDb.db)).toEqual({ fromVersion: 5, toVersion: LATEST_SCHEMA_VERSION, applied: 1 });
+
+    expect(testDb.raw.prepare('SELECT COUNT(*) AS n FROM confirmed_expenses').get()).toEqual({ n: 0 });
+    expect((await getAppSettings(testDb.db)).lastSuccessfulSyncAt).toBeNull();
+    expect(testDb.raw.prepare('SELECT submission_id FROM pending_submissions').all()).toEqual([{ submission_id: 'waiting' }]);
+    expect(testDb.raw.prepare('SELECT name FROM categories').all()).toEqual([{ name: 'Kids' }]);
+    // Issues now name their yearly tab; the same row number may appear in two years.
+    const issue = testDb.raw.prepare(
+      `INSERT INTO sheet_issues (account_id, spreadsheet_id, tab_title, row_number, kind) VALUES ('acct-1', 'sheet-1', ?, 5, 'missing_id')`,
+    );
+    issue.run('2025');
+    issue.run('2026');
+    expect(() => issue.run('2026')).toThrow(/UNIQUE/);
   });
 });

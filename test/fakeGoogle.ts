@@ -152,6 +152,50 @@ export class FakeGoogle {
     return (tab?.rows ?? []).slice(1).filter((row) => row.some((cell) => cell !== undefined && cell !== ''));
   }
 
+  /** Data rows (below the header) of a file's yearly tab, e.g. '2026'. */
+  yearRows(fileId: string, year: string): unknown[][] {
+    const tab = this.files.get(fileId)?.tabs.find((t) => t.title === year);
+    return (tab?.rows ?? []).slice(1).filter((row) => row.some((cell) => cell !== undefined && cell !== ''));
+  }
+
+  /** Titles of a file's tabs, in order. */
+  tabTitles(fileId: string): string[] {
+    return (this.files.get(fileId)?.tabs ?? []).map((t) => t.title);
+  }
+
+  /**
+   * The user edits a yearly tab in Google Sheets. A missing tab is first
+   * created with the expense header, as the app would have made it.
+   */
+  userEditYear(fileId: string, year: string, edit: (rows: unknown[][], file: FakeFile) => void): void {
+    const file = this.files.get(fileId);
+    if (file === undefined) throw new Error('no such file');
+    let tab = file.tabs.find((t) => t.title === year);
+    if (tab === undefined) {
+      tab = { sheetId: file.nextSheetId++, title: year, index: file.tabs.length, frozenRowCount: 1, rows: [['Date', 'Description', 'Amount', 'Category', 'Expense ID']] };
+      file.tabs.push(tab);
+    }
+    edit(tab.rows, file);
+    this.touch(file);
+  }
+
+  /**
+   * Adds expense rows to the yearly tabs their dates belong to (text dates,
+   * or Sheets date serials), creating tabs as needed.
+   */
+  seedExpenseRows(fileId: string, rows: readonly unknown[][]): void {
+    for (const row of rows) {
+      const date = row[0];
+      const year =
+        typeof date === 'number'
+          ? String(new Date(Date.UTC(1899, 11, 30) + date * 86_400_000).getUTCFullYear())
+          : String(date).slice(0, 4);
+      this.userEditYear(fileId, year, (tabRows) => {
+        tabRows.push([...row]);
+      });
+    }
+  }
+
   failNext(failure: { method?: string; pathIncludes: string; times?: number; response: FailureResponse }): void {
     const entry: Failure = { pathIncludes: failure.pathIncludes, remaining: failure.times ?? 1, response: failure.response };
     if (failure.method !== undefined) entry.method = failure.method;
@@ -426,6 +470,30 @@ export class FakeGoogle {
         };
         file.tabs.push(tab);
         replies.push({ addSheet: { properties: { sheetId: tab.sheetId, title: tab.title, index: tab.index } } });
+      } else if (request.sortRange) {
+        // Like Sheets: rows from startRowIndex move as whole rows (within the
+        // column span), ordered by the key column in the requested direction
+        // (ascending: numbers before text); stable for equal keys.
+        const { range, sortSpecs } = request.sortRange;
+        const tab = file.tabs.find((t) => t.sheetId === range.sheetId);
+        if (tab === undefined) return respond(400, errorBody(400, 'badRequest'));
+        const start = range.startRowIndex ?? 0;
+        const key = (row: unknown[]) => row[sortSpecs[0].dimensionIndex];
+        const rank = (v: unknown) => (v === undefined || v === '' ? 2 : typeof v === 'number' ? 0 : 1);
+        const direction = sortSpecs[0].sortOrder === 'DESCENDING' ? -1 : 1;
+        const body = tab.rows.slice(start).filter((row) => row.some((cell) => cell !== undefined && cell !== ''));
+        const ascending = (a: unknown[], b: unknown[]) => {
+          const ka = key(a);
+          const kb = key(b);
+          if (rank(ka) !== rank(kb)) return rank(ka) - rank(kb);
+          if (typeof ka === 'number' && typeof kb === 'number') return ka - kb;
+          const sa = String(ka ?? '').toLowerCase();
+          const sb = String(kb ?? '').toLowerCase();
+          return sa < sb ? -1 : sa > sb ? 1 : 0;
+        };
+        body.sort((a, b) => direction * ascending(a, b));
+        tab.rows.splice(start, tab.rows.length - start, ...body);
+        replies.push({});
       } else {
         return respond(400, errorBody(400, 'badRequest'));
       }

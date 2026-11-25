@@ -43,8 +43,9 @@ function deps(overrides: Partial<SubmissionDeps> = {}): SubmissionDeps {
   };
 }
 
+/** Rows added to the 2026 tab (as written, including problem rows). */
 function seed(...rows: unknown[][]) {
-  google.userEdit(scope.spreadsheetId, (sheet) => {
+  google.userEditYear(scope.spreadsheetId, '2026', (sheet) => {
     sheet.push(...rows);
   });
 }
@@ -90,10 +91,10 @@ describe('loading remote records', () => {
     await engine.refresh();
     const ranges = valueReads().map((r) => decodeURIComponent(r.path.split('/values/')[1] ?? ''));
     expect(ranges).toEqual([
-      "'Expenses'!A2:E251",
-      "'Expenses'!A252:E501",
-      "'Expenses'!A502:E751",
-      "'Expenses'!A752:E1000",
+      "'2026'!A2:E251",
+      "'2026'!A252:E501",
+      "'2026'!A502:E751",
+      "'2026'!A752:E1000",
     ]);
   });
 });
@@ -104,7 +105,7 @@ describe('reconciling remote changes', () => {
   });
 
   test('corrected values in Google Sheets appear after refresh', async () => {
-    google.userEdit(scope.spreadsheetId, (rows) => {
+    google.userEditYear(scope.spreadsheetId, '2026', (rows) => {
       rows[2] = ['2026-11-16', 'Groceries (corrected)', 28.4, 'Shopping', 'e2'];
     });
 
@@ -120,7 +121,7 @@ describe('reconciling remote changes', () => {
   });
 
   test('deleted rows disappear and added rows appear', async () => {
-    google.userEdit(scope.spreadsheetId, (rows) => {
+    google.userEditYear(scope.spreadsheetId, '2026', (rows) => {
       rows.splice(1, 1); // delete e1
       rows.push(['2026-11-20', 'Pharmacy', 12, 'Health', 'manual-1']);
     });
@@ -148,7 +149,7 @@ describe('failed refreshes keep the previous cache', () => {
 
   test('a network failure part-way through the read changes nothing', async () => {
     const before = await snapshot();
-    google.userEdit(scope.spreadsheetId, (rows) => rows.splice(1, 2));
+    google.userEditYear(scope.spreadsheetId, '2026', (rows) => rows.splice(1, 2));
     google.failNext({ method: 'GET', pathIncludes: 'A252', response: 'network' });
 
     expect(await new SubmissionEngine(deps({ now: () => T0 + 60_000 })).refresh()).toEqual({ kind: 'failed', code: 'offline' });
@@ -157,7 +158,7 @@ describe('failed refreshes keep the previous cache', () => {
 
   test('a failure while writing the new cache rolls back to the previous cache', async () => {
     const before = await snapshot();
-    google.userEdit(scope.spreadsheetId, (rows) => rows.splice(1, 1));
+    google.userEditYear(scope.spreadsheetId, '2026', (rows) => rows.splice(1, 1));
     let runsInTransaction = 0;
     const failing: SubmissionDeps['db'] = {
       ...device.db,
@@ -180,7 +181,7 @@ describe('failed refreshes keep the previous cache', () => {
 
   test('a changed header row fails validation and changes nothing', async () => {
     const before = await snapshot();
-    google.userEdit(scope.spreadsheetId, (rows) => {
+    google.userEditYear(scope.spreadsheetId, '2026', (rows) => {
       rows[0] = ['Date', 'Amount', 'Description', 'Category', 'Expense ID'];
       rows.splice(1, 3);
     });
@@ -209,7 +210,7 @@ describe('changes during a multi-request refresh', () => {
     google.beforeRequest = (request) => {
       if (!edited && request.method === 'GET' && request.path.includes('A252')) {
         edited = true;
-        google.userEdit(scope.spreadsheetId, (rows) => {
+        google.userEditYear(scope.spreadsheetId, '2026', (rows) => {
           rows[1] = ['2026-11-01', 'Rent share', 450, 'Bills', 'e1'];
         });
       }
@@ -225,7 +226,7 @@ describe('changes during a multi-request refresh', () => {
     const before = await confirmed();
     google.beforeRequest = (request) => {
       if (request.method === 'GET' && request.path.includes('A252')) {
-        google.userEdit(scope.spreadsheetId, (rows) => rows.push(['2026-11-21', 'x', 1, 'Other', `churn-${rows.length}`]));
+        google.userEditYear(scope.spreadsheetId, '2026', (rows) => rows.push(['2026-11-21', 'x', 1, 'Other', `churn-${rows.length}`]));
       }
     };
 
@@ -319,14 +320,14 @@ describe('data validation', () => {
     expect(await engine.refresh()).toMatchObject({ kind: 'refreshed', expenseCount: 3, excludedRowCount: 7 });
 
     expect(await listSheetIssues(device.db, scope)).toEqual([
-      { rowNumber: 6, kind: 'invalid_amount', expenseId: 'bad-amount' },
-      { rowNumber: 7, kind: 'invalid_date', expenseId: 'bad-date' },
-      { rowNumber: 8, kind: 'missing_id', expenseId: null },
-      { rowNumber: 9, kind: 'missing_category', expenseId: 'no-cat' },
-      { rowNumber: 10, kind: 'duplicate_resolved', expenseId: 'e2' },
-      { rowNumber: 11, kind: 'conflicting_duplicate', expenseId: 'clash' },
-      { rowNumber: 12, kind: 'conflicting_duplicate', expenseId: 'clash' },
-      { rowNumber: 13, kind: 'invalid_amount', expenseId: 'neg' },
+      { tab: '2026', rowNumber: 6, kind: 'invalid_amount', expenseId: 'bad-amount' },
+      { tab: '2026', rowNumber: 7, kind: 'invalid_date', expenseId: 'bad-date' },
+      { tab: '2026', rowNumber: 8, kind: 'missing_id', expenseId: null },
+      { tab: '2026', rowNumber: 9, kind: 'missing_category', expenseId: 'no-cat' },
+      { tab: '2026', rowNumber: 10, kind: 'duplicate_resolved', expenseId: 'e2' },
+      { tab: '2026', rowNumber: 11, kind: 'conflicting_duplicate', expenseId: 'clash' },
+      { tab: '2026', rowNumber: 12, kind: 'conflicting_duplicate', expenseId: 'clash' },
+      { tab: '2026', rowNumber: 13, kind: 'invalid_amount', expenseId: 'neg' },
     ]);
     const analysis = await analyzeSpending(device.db, scope, all);
     expect(analysis.totalMinor).toBe(50_000 + 8_240 + 380);
@@ -336,7 +337,7 @@ describe('data validation', () => {
   test('fixing the rows in the sheet clears the issues on the next refresh', async () => {
     seed(['2026-11-02', 'Typo amount', 'abc', 'Other', 'fix-me']);
     await engine.refresh();
-    google.userEdit(scope.spreadsheetId, (rows) => {
+    google.userEditYear(scope.spreadsheetId, '2026', (rows) => {
       rows[4] = ['2026-11-02', 'Typo amount', 7.5, 'Other', 'fix-me'];
     });
 
@@ -369,6 +370,7 @@ test('changing periods queries SQLite only', async () => {
 describe('keeping the UI responsive on long sheets', () => {
   function sheetRows(count: number) {
     return Array.from({ length: count }, (_, index) => ({
+      tab: '2026',
       rowNumber: index + 2,
       cells: [`2026-10-${String((index % 28) + 1).padStart(2, '0')}`, `Item ${index}`, (index % 50) + 1, 'Groceries', `id-${index}`],
     }));
@@ -377,11 +379,11 @@ describe('keeping the UI responsive on long sheets', () => {
   test('validation in slices gives exactly the one-pass result, pausing between slices', async () => {
     const rows = sheetRows(1_250);
     // Issues and duplicates that straddle slice boundaries.
-    rows[499] = { rowNumber: 501, cells: ['2026-10-01', 'Same', 5, 'Bills', 'dup'] };
-    rows[500] = { rowNumber: 502, cells: ['not a date', 'Bad', 5, 'Bills', 'bad-date'] };
-    rows[1_100] = { rowNumber: 1_102, cells: ['2026-10-01', 'Same', 5, 'Bills', 'dup'] };
-    rows[1_101] = { rowNumber: 1_103, cells: ['2026-10-02', 'Other', 6, 'Bills', 'id-3'] };
-    rows[1_102] = { rowNumber: 1_104, cells: [] };
+    rows[499] = { tab: '2026', rowNumber: 501, cells: ['2026-10-01', 'Same', 5, 'Bills', 'dup'] };
+    rows[500] = { tab: '2026', rowNumber: 502, cells: ['not a date', 'Bad', 5, 'Bills', 'bad-date'] };
+    rows[1_100] = { tab: '2026', rowNumber: 1_102, cells: ['2026-10-01', 'Same', 5, 'Bills', 'dup'] };
+    rows[1_101] = { tab: '2026', rowNumber: 1_103, cells: ['2026-10-02', 'Other', 6, 'Bills', 'id-3'] };
+    rows[1_102] = { tab: '2026', rowNumber: 1_104, cells: [] };
     let pauses = 0;
 
     const sliced = await validateInSlices(rows, 2, async () => {

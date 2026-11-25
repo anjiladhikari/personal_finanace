@@ -26,8 +26,8 @@ function insertExpensesSql(rowCount: number): string {
 }
 
 function insertIssuesSql(rowCount: number): string {
-  return `INSERT INTO sheet_issues (account_id, spreadsheet_id, row_number, kind, expense_id)
-    VALUES ${placeholders(rowCount, 5)}`;
+  return `INSERT INTO sheet_issues (account_id, spreadsheet_id, tab_title, row_number, kind, expense_id)
+    VALUES ${placeholders(rowCount, 6)}`;
 }
 
 function deletePendingSql(idCount: number): string {
@@ -80,7 +80,7 @@ export async function replaceLedgerCache(
     for (const batch of chunks(ledger.issues, ROWS_PER_INSERT)) {
       const params: SqlValue[] = [];
       for (const issue of batch) {
-        params.push(scope.accountId, scope.spreadsheetId, issue.rowNumber, issue.kind, issue.expenseId);
+        params.push(scope.accountId, scope.spreadsheetId, issue.tab, issue.rowNumber, issue.kind, issue.expenseId);
       }
       await tx.run(insertIssuesSql(batch.length), params);
     }
@@ -95,18 +95,20 @@ export async function replaceLedgerCache(
 }
 
 export interface StoredSheetIssue {
+  /** The yearly tab, e.g. "2026". */
+  readonly tab: string;
   readonly rowNumber: number;
   readonly kind: LedgerIssueKind;
   readonly expenseId: string | null;
 }
 
 export async function listSheetIssues(db: SqlDatabase, scope: DataScope): Promise<StoredSheetIssue[]> {
-  const rows = await db.getAll<{ row_number: number; kind: LedgerIssueKind; expense_id: string | null }>(
-    `SELECT row_number, kind, expense_id FROM sheet_issues
-     WHERE account_id = ? AND spreadsheet_id = ? ORDER BY row_number`,
+  const rows = await db.getAll<{ tab_title: string; row_number: number; kind: LedgerIssueKind; expense_id: string | null }>(
+    `SELECT tab_title, row_number, kind, expense_id FROM sheet_issues
+     WHERE account_id = ? AND spreadsheet_id = ? ORDER BY tab_title, row_number`,
     [scope.accountId, scope.spreadsheetId],
   );
-  return rows.map((row) => ({ rowNumber: row.row_number, kind: row.kind, expenseId: row.expense_id }));
+  return rows.map((row) => ({ tab: row.tab_title, rowNumber: row.row_number, kind: row.kind, expenseId: row.expense_id }));
 }
 
 export async function countConfirmedExpenses(db: SqlDatabase, scope: DataScope): Promise<number> {

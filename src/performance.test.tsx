@@ -104,9 +104,7 @@ run('ten-year ledger (36,500 rows)', () => {
     const rows = largeLedgerRows();
     const tsv = process.env.PERF_TSV;
     if (tsv !== undefined && tsv !== '') writeFileSync(tsv, `${rows.map((cells) => cells.join('\t')).join('\n')}\n`);
-    google.userEdit(scope.spreadsheetId, (sheet) => {
-      sheet.push(...rows);
-    });
+    google.seedExpenseRows(scope.spreadsheetId, rows);
     engine = new SubmissionEngine({
       db: testDb.db,
       authorizer,
@@ -149,7 +147,7 @@ run('ten-year ledger (36,500 rows)', () => {
   });
 
   test('ledger validation in one pass (before slicing, the longest synchronous step)', async () => {
-    const rows = largeLedgerRows().map((cells, index) => ({ rowNumber: index + 2, cells }));
+    const rows = largeLedgerRows().map((cells, index) => ({ tab: String(cells[0]).slice(0, 4), rowNumber: index + 2, cells }));
     const samples: number[] = [];
     for (let i = 0; i < 5; i += 1) {
       const [ledger, ms] = await time(() => buildLedger(rows, 2));
@@ -160,7 +158,7 @@ run('ten-year ledger (36,500 rows)', () => {
   });
 
   test('refresh validation in slices: longest single block on the JS thread', async () => {
-    const rows = largeLedgerRows().map((cells, index) => ({ rowNumber: index + 2, cells }));
+    const rows = largeLedgerRows().map((cells, index) => ({ tab: String(cells[0]).slice(0, 4), rowNumber: index + 2, cells }));
     const blocks: number[] = [];
     let sliceStart = now();
     const [ledger, totalMs] = await time(() =>

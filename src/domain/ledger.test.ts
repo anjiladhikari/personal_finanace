@@ -1,6 +1,6 @@
 import { affectsTotals, buildLedger } from './ledger';
 
-const row = (rowNumber: number, ...cells: unknown[]) => ({ rowNumber, cells });
+const row = (rowNumber: number, ...cells: unknown[]) => ({ tab: '2026', rowNumber, cells });
 
 test('valid rows become expenses with their row numbers; empty rows are skipped', () => {
   const ledger = buildLedger(
@@ -8,8 +8,8 @@ test('valid rows become expenses with their row numbers; empty rows are skipped'
     2,
   );
   expect(ledger.expenses).toEqual([
-    { expenseId: 'a', rowNumber: 2, purchaseDate: '2026-11-01', description: 'Rent', amountMinor: 50_000, category: 'Bills' },
-    { expenseId: 'b', rowNumber: 5, purchaseDate: '2026-11-02', description: '', amountMinor: 700, category: 'Other' },
+    { expenseId: 'a', tab: '2026', rowNumber: 2, purchaseDate: '2026-11-01', description: 'Rent', amountMinor: 50_000, category: 'Bills' },
+    { expenseId: 'b', tab: '2026', rowNumber: 5, purchaseDate: '2026-11-02', description: '', amountMinor: 700, category: 'Other' },
   ]);
   expect(ledger.emptyRows).toBe(2);
   expect(ledger.issues).toEqual([]);
@@ -26,10 +26,10 @@ test('each invalid row is reported once with the most important problem', () => 
     2,
   );
   expect(ledger.issues).toEqual([
-    { rowNumber: 2, kind: 'missing_id', expenseId: null },
-    { rowNumber: 3, kind: 'invalid_date', expenseId: 'id3' },
-    { rowNumber: 4, kind: 'invalid_amount', expenseId: 'id4' },
-    { rowNumber: 5, kind: 'missing_category', expenseId: 'id5' },
+    { tab: '2026', rowNumber: 2, kind: 'missing_id', expenseId: null },
+    { tab: '2026', rowNumber: 3, kind: 'invalid_date', expenseId: 'id3' },
+    { tab: '2026', rowNumber: 4, kind: 'invalid_amount', expenseId: 'id4' },
+    { tab: '2026', rowNumber: 5, kind: 'missing_category', expenseId: 'id5' },
   ]);
   expect([...ledger.idsInSheet].sort()).toEqual(['id3', 'id4', 'id5']);
 });
@@ -40,7 +40,7 @@ test('exact duplicates count once; the earliest row is kept', () => {
     2,
   );
   expect(ledger.expenses.map((e) => e.rowNumber)).toEqual([7]);
-  expect(ledger.issues).toEqual([{ rowNumber: 9, kind: 'duplicate_resolved', expenseId: 'a' }]);
+  expect(ledger.issues).toEqual([{ tab: '2026', rowNumber: 9, kind: 'duplicate_resolved', expenseId: 'a' }]);
   expect(affectsTotals('duplicate_resolved')).toBe(false);
 });
 
@@ -60,4 +60,21 @@ test('conflicting duplicates are all excluded and all reported', () => {
     [4, 'conflicting_duplicate'],
   ]);
   expect(affectsTotals('conflicting_duplicate')).toBe(true);
+});
+
+test('rows from several yearly tabs: identity is the Expense ID across tabs; order is tab, then row', () => {
+  const ledger = buildLedger(
+    [
+      { tab: '2025', rowNumber: 2, cells: ['2025-12-31', 'Bus', 5, 'Transport', 'x'] },
+      { tab: '2026', rowNumber: 2, cells: ['2026-01-02', 'Train', 7, 'Transport', 'y'] },
+      // The same expense copied into the next year's tab counts once.
+      { tab: '2026', rowNumber: 3, cells: ['2025-12-31', 'Bus', 5, 'Transport', 'x'] },
+    ],
+    2,
+  );
+  expect(ledger.expenses.map((e) => [e.tab, e.rowNumber, e.expenseId])).toEqual([
+    ['2025', 2, 'x'],
+    ['2026', 2, 'y'],
+  ]);
+  expect(ledger.issues).toEqual([{ tab: '2026', rowNumber: 3, kind: 'duplicate_resolved', expenseId: 'x' }]);
 });

@@ -78,6 +78,17 @@ export type SheetsBatchRequest =
       readonly addSheet: {
         readonly properties: { readonly title: string; readonly gridProperties?: { readonly frozenRowCount: number } };
       };
+    }
+  | {
+      readonly sortRange: {
+        readonly range: {
+          readonly sheetId: number;
+          readonly startRowIndex: number;
+          readonly startColumnIndex: number;
+          readonly endColumnIndex: number;
+        };
+        readonly sortSpecs: readonly { readonly dimensionIndex: number; readonly sortOrder: 'ASCENDING' | 'DESCENDING' }[];
+      };
     };
 
 export async function batchUpdate(

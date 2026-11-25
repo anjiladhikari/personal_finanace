@@ -100,6 +100,26 @@ export function inspectExpensesTab(probe: readonly (readonly unknown[])[]): TabI
 }
 
 // ---------------------------------------------------------------------------
+// Yearly expense tabs. Each expense is written to the tab named after the
+// year of its purchase date ("2026"), never the day it is saved or synced.
+// Every yearly tab has the EXPENSE_COLUMNS header in row 1. The original
+// "Expenses" tab is no longer read or written.
+
+const YEAR_TITLE = /^\d{4}$/;
+
+/** The yearly tab an expense belongs to, from its purchase date ("2026-11-20" → "2026"). */
+export function yearTabTitle(purchaseDate: string): string {
+  return purchaseDate.slice(0, 4);
+}
+
+export function isYearTabTitle(title: string): boolean {
+  return YEAR_TITLE.test(title);
+}
+
+/** Sorts rows 2 onwards of a yearly tab by Date, moving whole rows (columns A–E). */
+export const EXPENSE_SORT_COLUMNS = { startColumnIndex: 0, endColumnIndex: EXPENSE_COLUMNS.length } as const;
+
+// ---------------------------------------------------------------------------
 // Categories tab: a backup of the user's own category definitions, so they
 // come back after a reinstall. Found by the sheetId in a Drive app property.
 

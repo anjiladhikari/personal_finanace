@@ -68,7 +68,8 @@ afterEach(() => {
   mockServices = null;
 });
 
-const rows = () => google.dataRows(scope.spreadsheetId);
+/** Rows in the tab of the current year (the form's dates default to today). */
+const rows = () => google.yearRows(scope.spreadsheetId, todayLocalDate().slice(0, 4));
 const appends = () => google.requests('POST', ':append');
 
 async function fillValidExpense(description = 'Coffee', amount = '4.50') {

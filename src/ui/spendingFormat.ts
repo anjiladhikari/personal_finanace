@@ -107,7 +107,7 @@ export function refreshFailureMessage(code: RefreshFailureCode): string {
     case 'sheet_trashed':
       return 'Couldn’t refresh: the spreadsheet is in the Google Drive trash. Check Account.';
     case 'sheet_structure_changed':
-      return 'Couldn’t refresh: the Expenses header row has changed. Check Account.';
+      return 'Couldn’t refresh: a year tab’s header row has changed. Check the spreadsheet.';
     case 'changed_during_refresh':
       return 'Couldn’t refresh: the sheet kept changing while it was being read. Try again.';
     default:

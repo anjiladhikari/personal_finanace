@@ -15,6 +15,7 @@ import {
   type SubmissionError,
 } from '@/db/pendingSubmissions';
 import type { SqlDatabase } from '@/db/sql';
+import { clearTabSort, listPendingTabSorts, markTabSortNeeded } from '@/db/tabSorts';
 import {
   categoryKey,
   colourForName,
@@ -26,7 +27,7 @@ import {
   type CategoryRegistry,
 } from '@/domain/categories';
 import type { DataScope, ExpensePayload, SubmissionErrorCode, SubmissionState } from '@/domain/expense';
-import { a1Range, HEADER_RANGE_COLUMNS } from '@/domain/sheetContract';
+import { a1Range, HEADER_RANGE_COLUMNS, yearTabTitle } from '@/domain/sheetContract';
 import { parseSheetRow, toSheetRow } from '@/domain/sheetRow';
 import {
   ATTEMPT_TIMEOUT_MS,
@@ -38,11 +39,12 @@ import {
 import { AuthorizationError, type GoogleAuthorizer } from '@/google/authorization';
 import { GoogleApiError, type FetchLike } from '@/google/http';
 import { ReconnectRequiredError } from '@/google/session';
-import { appendRow, getValues } from '@/google/sheets';
+import { appendRow, getTabs, getValues } from '@/google/sheets';
 
 import { syncCategories } from './categorySync';
 import { runRefresh, type RefreshFailureCode, type RefreshOutcome, type RefreshProgress } from './refresh';
 import { accessFailure, err, openSheetAccess, type SheetAccess } from './sheetAccess';
+import { ensureYearTab, sortYearTab, type YearTab } from './yearTabs';
 
 export type CreateCategoryOutcome =
   | { readonly kind: 'created'; readonly category: CategoryDefinition }
@@ -369,7 +371,8 @@ export class SubmissionEngine {
         resetBackoff ||
         ((nextAttemptAt(s) ?? 0) <= now && this.rateLimitedUntil <= now));
 
-    if (!items.some((s) => s.state === 'uncertain' || isDue(s))) return this.nextRunAt(items);
+    const sortsWaiting = (await listPendingTabSorts(db, scope.spreadsheetId)).length > 0;
+    if (!items.some((s) => s.state === 'uncertain' || isDue(s)) && !sortsWaiting) return this.nextRunAt(items);
 
     if (!(await this.deps.isOnline())) {
       await this.setErrors(items.filter(isDue), 'pending', err('offline'));
@@ -392,12 +395,35 @@ export class SubmissionEngine {
     const resendable = await this.reconcile(preflight, settings, scope, items);
     if (resendable === null) return this.nextRunAt(await listPendingSubmissions(db, scope));
 
+    const yearTabs = new Map<string, Promise<YearTab>>();
     for (const item of await listPendingSubmissions(db, scope)) {
       if (item.state !== 'pending' || !(isDue(item) || resendable.has(item.submissionId))) continue;
-      const failure = await this.send(preflight, settings, scope, item);
+      const failure = await this.send(preflight, settings, scope, item, yearTabs);
       if (failure?.stopRun) break;
     }
-    return this.nextRunAt(await listPendingSubmissions(db, scope));
+
+    const next = this.nextRunAt(await listPendingSubmissions(db, scope));
+    if (!(await this.sortWaitingTabs(preflight, scope))) return next;
+    // A sort failed: try it again soon, without sending anything again.
+    const retrySort = this.deps.now() + (BACKOFF_DELAYS_MS[1] ?? 30_000);
+    return next === null ? retrySort : Math.min(next, retrySort);
+  }
+
+  /**
+   * Sorts every yearly tab waiting for it (rows appended this run, or a sort
+   * that failed earlier). Returns true if any is still waiting.
+   */
+  private async sortWaitingTabs(ready: Extract<SheetAccess, { kind: 'ready' }>, scope: DataScope): Promise<boolean> {
+    for (const title of await listPendingTabSorts(this.deps.db, scope.spreadsheetId)) {
+      try {
+        // Sorted, gone, or no longer an expense tab: either way nothing is left to do.
+        await sortYearTab(ready.session, scope.spreadsheetId, title);
+        await clearTabSort(this.deps.db, scope.spreadsheetId, title);
+      } catch {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -416,9 +442,13 @@ export class SubmissionEngine {
     const uncertain = items.filter((s) => s.state === 'uncertain');
     if (uncertain.length === 0) return resendable;
 
-    let rows: unknown[][];
+    // Each expense can only be in the tab of its own purchase year.
+    const rowsByTab = new Map<string, unknown[][]>();
     try {
-      rows = await getValues(ready.session, scope.spreadsheetId, a1Range(ready.tab.title, 'A2:E'));
+      const titles = new Set((await getTabs(ready.session, scope.spreadsheetId)).map((t) => t.title));
+      for (const title of new Set(uncertain.map((item) => yearTabTitle(item.purchaseDate)))) {
+        rowsByTab.set(title, titles.has(title) ? await getValues(ready.session, scope.spreadsheetId, a1Range(title, 'A2:E')) : []);
+      }
     } catch (error) {
       const failure = accessFailure(error);
       for (const item of uncertain) {
@@ -429,6 +459,7 @@ export class SubmissionEngine {
 
     const now = this.deps.now();
     for (const item of uncertain) {
+      const rows = rowsByTab.get(yearTabTitle(item.purchaseDate)) ?? [];
       const match = rows.find((row) => String(row[ID_COLUMN] ?? '').trim() === item.submissionId);
       if (match !== undefined) {
         const remote = parseSheetRow(match, settings.currency.minorUnits);
@@ -450,16 +481,38 @@ export class SubmissionEngine {
     settings: AppSettings,
     scope: DataScope,
     item: PendingSubmission,
+    yearTabs: Map<string, Promise<YearTab>>,
   ): Promise<SendFailure | null> {
     const { db } = this.deps;
+
+    // The tab comes from the expense's own date, never from today or the sync date.
+    const title = yearTabTitle(item.purchaseDate);
+    try {
+      let tab = yearTabs.get(title);
+      if (tab === undefined) {
+        tab = ensureYearTab(ready.session, scope.spreadsheetId, title);
+        yearTabs.set(title, tab);
+      }
+      await tab;
+    } catch (error) {
+      // Nothing was written: the outcome is known, so no reconciliation is needed.
+      yearTabs.delete(title);
+      const failure = accessFailure(error);
+      const to = failure.kind === 'blocked' ? 'blocked' : 'pending';
+      await transitionSubmission(db, item.submissionId, 'pending', to, failure.error);
+      return { to, error: failure.error, stopRun: true };
+    }
+
     if (!(await markSending(db, item.submissionId, iso(this.deps.now())))) return null;
     notifySubmissionsChanged();
+    // Recorded before the append, so a sort that never happens is retried later.
+    await markTabSortNeeded(db, scope.spreadsheetId, title);
 
     try {
       await appendRow(
         ready.session,
         scope.spreadsheetId,
-        a1Range(ready.tab.title, HEADER_RANGE_COLUMNS),
+        a1Range(title, HEADER_RANGE_COLUMNS),
         toSheetRow(item.submissionId, item, settings.currency.minorUnits),
         ATTEMPT_TIMEOUT_MS,
       );
