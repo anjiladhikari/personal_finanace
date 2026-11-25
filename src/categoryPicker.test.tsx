@@ -242,7 +242,7 @@ describe('"See more" picker', () => {
 
     await fireEvent.press(screen.getByTestId('save-expense'));
     await screen.findByTestId('save-confirmation');
-    expect(google.dataRows(scope.spreadsheetId)).toEqual([[today, 'Swim lesson', 18.2, 'Pets', 'uuid-1']]);
+    expect(google.yearRows(scope.spreadsheetId, today.slice(0, 4))).toEqual([[today, 'Swim lesson', 18.2, 'Pets', 'uuid-1']]);
   });
 });
 

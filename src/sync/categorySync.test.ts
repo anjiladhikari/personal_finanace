@@ -89,7 +89,7 @@ describe('creating a category', () => {
     const engine = new SubmissionEngine(deps());
     await engine.createCategory('Kids', await registry());
     await engine.syncCategories();
-    expect(google.dataRows(scope.spreadsheetId)).toEqual([]);
+    expect(google.yearRows(scope.spreadsheetId, '2026')).toEqual([]);
     expect(await listPendingSubmissions(phone.db, scope)).toEqual([]);
   });
 
@@ -135,7 +135,7 @@ describe('backing up definitions', () => {
       expect.objectContaining({ syncedSpreadsheetId: scope.spreadsheetId }),
     ]);
     // The Expenses tab and its rows are untouched.
-    expect(google.dataRows(scope.spreadsheetId)).toEqual([]);
+    expect(google.yearRows(scope.spreadsheetId, '2026')).toEqual([]);
   });
 
   test('a lost response after the write is retried without a second row', async () => {
@@ -262,9 +262,10 @@ describe('refresh', () => {
   });
 
   test('labels in expense rows are kept exactly, even with no definition', async () => {
-    google.userEdit(scope.spreadsheetId, (rows) => {
-      rows.push(['2026-11-20', 'Hand typed', 12, 'Typed in Sheets', 'h1'], ['2026-11-21', 'Lowercase', 3, 'groceries', 'h2']);
-    });
+    google.seedExpenseRows(scope.spreadsheetId, [
+      ['2026-11-20', 'Hand typed', 12, 'Typed in Sheets', 'h1'],
+      ['2026-11-21', 'Lowercase', 3, 'groceries', 'h2'],
+    ]);
     const engine = new SubmissionEngine(deps());
     await engine.refresh();
 

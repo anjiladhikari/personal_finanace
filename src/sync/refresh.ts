@@ -11,6 +11,7 @@ import type { GoogleSession } from '@/google/session';
 import { getValues } from '@/google/sheets';
 
 import { accessFailure, openSheetAccess } from './sheetAccess';
+import { listYearTabs, type YearTab } from './yearTabs';
 
 /** Rows per read request (provisional). Columns are always A:E only. */
 export const REFRESH_CHUNK_ROWS = 2000;
@@ -39,8 +40,9 @@ export type RefreshOutcome =
 
 export interface RefreshProgress {
   readonly attempt: number;
+  /** Data rows read so far, across all yearly tabs. */
   readonly rowsRead: number;
-  /** Rows in the sheet grid (upper bound), when known. */
+  /** Data rows in all yearly tabs (an upper bound: grid size), when known. */
   readonly totalRows: number | null;
 }
 
@@ -82,16 +84,16 @@ function unchanged(before: DriveFile, after: DriveFile): boolean {
 async function readRows(
   session: GoogleSession,
   spreadsheetId: string,
-  tabTitle: string,
-  rowCount: number | null,
+  tab: YearTab,
   chunkRows: number,
   onChunk: (rowsRead: number) => void,
 ): Promise<SheetRowInput[]> {
   const rows: SheetRowInput[] = [];
+  const { rowCount, title } = tab;
   for (let start = 2; rowCount === null || start <= rowCount; start += chunkRows) {
     const end = rowCount === null ? start + chunkRows - 1 : Math.min(start + chunkRows - 1, rowCount);
-    const values = await getValues(session, spreadsheetId, a1Range(tabTitle, `A${start}:E${end}`));
-    values.forEach((cells, offset) => rows.push({ rowNumber: start + offset, cells }));
+    const values = await getValues(session, spreadsheetId, a1Range(title, `A${start}:E${end}`));
+    values.forEach((cells, offset) => rows.push({ tab: title, rowNumber: start + offset, cells }));
     onChunk(end - 1);
     if (rowCount === null && values.length === 0) break;
   }
@@ -117,13 +119,24 @@ export async function runRefresh(
     const access = await openSheetAccess(deps, settings, scope);
     if (access.kind !== 'ready') return { kind: 'failed', code: access.error.code };
 
-    let rows: SheetRowInput[];
+    const rows: SheetRowInput[] = [];
     let after: DriveFile;
     try {
-      onProgress({ attempt, rowsRead: 0, totalRows: access.tab.rowCount });
-      rows = await readRows(access.session, scope.spreadsheetId, access.tab.title, access.tab.rowCount, chunkRows, (rowsRead) =>
-        onProgress({ attempt, rowsRead, totalRows: access.tab.rowCount }),
-      );
+      // Every yearly tab with the expense header; the original Expenses tab is not read.
+      const tabs = await listYearTabs(access.session, scope.spreadsheetId);
+      const totalRows = tabs.every((t) => t.rowCount !== null)
+        ? tabs.reduce((sum, t) => sum + Math.max(0, (t.rowCount ?? 0) - 1), 0)
+        : null;
+      onProgress({ attempt, rowsRead: 0, totalRows });
+      let before = 0;
+      for (const tab of tabs) {
+        const offset = before;
+        const tabRows = await readRows(access.session, scope.spreadsheetId, tab, chunkRows, (rowsRead) =>
+          onProgress({ attempt, rowsRead: offset + rowsRead, totalRows }),
+        );
+        rows.push(...tabRows);
+        before += Math.max(0, (tab.rowCount ?? tabRows.length + 1) - 1);
+      }
       after = await getDriveFile(access.session, scope.spreadsheetId);
     } catch (error) {
       return { kind: 'failed', code: accessFailure(error).error.code };

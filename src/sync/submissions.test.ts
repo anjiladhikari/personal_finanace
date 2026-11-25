@@ -50,7 +50,8 @@ function deps(overrides: Partial<SubmissionDeps> = {}): SubmissionDeps {
 }
 
 const appends = () => google.requests('POST', ':append');
-const rows = () => google.dataRows(scope.spreadsheetId);
+/** Expense rows in the 2026 tab (the test expenses are dated 2026). */
+const rows = () => google.yearRows(scope.spreadsheetId, '2026');
 const pending = () => listPendingSubmissions(device.db, scope);
 const confirmed = () => listConfirmedExpenses(device.db, scope, null);
 
@@ -284,7 +285,9 @@ describe('app termination during a save', () => {
 
   test('if the write reached Google, the next launch confirms it from the sheet', async () => {
     await crashAfterMarkingSending();
-    google.files.get(scope.spreadsheetId)?.tabs[0]?.rows.push(['2026-11-21', 'Coffee', 4.5, 'Eating out', 'crashed']);
+    google.userEditYear(scope.spreadsheetId, '2026', (rows) => {
+      rows.push(['2026-11-21', 'Coffee', 4.5, 'Eating out', 'crashed']);
+    });
 
     clock = T0 + 5_000;
     await new SubmissionEngine(deps()).processQueue('startup');
@@ -331,7 +334,7 @@ describe('remote success, local update failure', () => {
     expect(await pending()).toMatchObject([{ submissionId: 'uuid-1', state: 'sending' }]);
 
     // The sheet is the source of truth: it is what the local record is rebuilt from.
-    const row = google.files.get(scope.spreadsheetId)?.tabs[0]?.rows[1];
+    const row = google.files.get(scope.spreadsheetId)?.tabs.find((t) => t.title === '2026')?.rows[1];
     if (row === undefined) throw new Error('missing row');
     row[1] = 'Coffee with Sam';
 
@@ -355,9 +358,9 @@ describe('actionable failures', () => {
   });
 
   test('a changed header blocks writing so columns cannot be misaligned', async () => {
-    const tab = google.files.get(scope.spreadsheetId)?.tabs[0];
-    if (tab === undefined) throw new Error('missing tab');
-    tab.rows[0] = ['Date', 'Amount', 'Description', 'Category', 'Expense ID'];
+    google.userEditYear(scope.spreadsheetId, '2026', (rows) => {
+      rows[0] = ['Date', 'Amount', 'Description', 'Category', 'Expense ID'];
+    });
 
     expect(await new SubmissionEngine(deps()).submit(coffee)).toMatchObject({
       state: 'blocked',

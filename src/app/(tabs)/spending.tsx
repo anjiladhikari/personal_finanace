@@ -247,8 +247,8 @@ function Results({ scope, settings, period, chartType, onChartType, layout }: {
             Totals exclude {analysis.excludedRowCount} row{analysis.excludedRowCount === 1 ? '' : 's'} in your sheet that need fixing:
           </Text>
           {blocking.map((issue) => (
-            <Text key={issue.rowNumber} style={styles.issue}>
-              Row {issue.rowNumber}: {sheetIssueMessage(issue.kind)}.
+            <Text key={`${issue.tab}:${issue.rowNumber}`} style={styles.issue}>
+              {issue.tab}, row {issue.rowNumber}: {sheetIssueMessage(issue.kind)}.
             </Text>
           ))}
         </View>
@@ -294,7 +294,7 @@ function SyncStatusCard({ settings, scope }: { readonly settings: AppSettings; r
     refreshLine =
       progress === null || progress.rowsRead === 0
         ? 'Refreshing from Google Sheets…'
-        : `Refreshing… ${groupThousands(progress.rowsRead)}${progress.totalRows === null ? '' : ` of ${groupThousands(progress.totalRows - 1)}`} rows read`;
+        : `Refreshing… ${groupThousands(progress.rowsRead)}${progress.totalRows === null ? '' : ` of ${groupThousands(progress.totalRows)}`} rows read`;
   } else if (status.kind === 'failed') {
     refreshLine = refreshFailureMessage(status.code);
   } else {

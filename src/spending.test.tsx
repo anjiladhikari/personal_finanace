@@ -278,7 +278,7 @@ describe('states', () => {
         return google.fetch(url, init);
       },
     };
-    google.userEdit(scope.spreadsheetId, (rows) => {
+    google.userEditYear(scope.spreadsheetId, thisYear ?? '', (rows) => {
       rows.push([today, 'Groceries run', 82.4, 'Groceries', 'r1']);
     });
 
@@ -307,7 +307,7 @@ describe('states', () => {
 });
 
 test('the first visit with an empty cache loads the sheet', async () => {
-  google.userEdit(scope.spreadsheetId, (rows) => {
+  google.userEditYear(scope.spreadsheetId, thisYear ?? '', (rows) => {
     rows.push([today, 'Groceries run', 82.4, 'Groceries', 'r1'], [today, 'Bus', 3.8, 'Transport', 'r2']);
   });
 
@@ -318,13 +318,13 @@ test('the first visit with an empty cache loads the sheet', async () => {
 });
 
 test('Refresh shows corrections and deletions made in Google Sheets', async () => {
-  google.userEdit(scope.spreadsheetId, (rows) => {
+  google.userEditYear(scope.spreadsheetId, thisYear ?? '', (rows) => {
     rows.push([today, 'Groceries run', 82.4, 'Groceries', 'r1'], [today, 'Bus', 3.8, 'Transport', 'r2']);
   });
   await openMySpending();
   await screen.findByText('$86.20');
 
-  google.userEdit(scope.spreadsheetId, (rows) => {
+  google.userEditYear(scope.spreadsheetId, thisYear ?? '', (rows) => {
     rows[1] = [today, 'Groceries run', 28.4, 'Groceries', 'r1'];
     rows.splice(2, 1);
   });
@@ -348,15 +348,15 @@ test('a failed refresh keeps cached results and says when the last good refresh 
 });
 
 test('rows that need fixing are listed with row numbers and excluded from totals', async () => {
-  google.userEdit(scope.spreadsheetId, (rows) => {
+  google.userEditYear(scope.spreadsheetId, thisYear ?? '', (rows) => {
     rows.push([today, 'Ok', 10, 'Other', 'ok'], [today, 'Typo', 'ten', 'Other', 'bad'], [today, 'No id', 5, 'Other', '']);
   });
 
   await openMySpending();
 
   expect(await screen.findByText('Totals exclude 2 rows in your sheet that need fixing:')).toBeOnTheScreen();
-  expect(screen.getByText('Row 3: the amount isn’t a valid positive amount.')).toBeOnTheScreen();
-  expect(screen.getByText('Row 4: the Expense ID is missing.')).toBeOnTheScreen();
+  expect(screen.getByText(`${thisYear}, row 3: the amount isn’t a valid positive amount.`)).toBeOnTheScreen();
+  expect(screen.getByText(`${thisYear}, row 4: the Expense ID is missing.`)).toBeOnTheScreen();
   expect(screen.getByTestId('period-total')).toHaveTextContent('$10.00');
 });
 

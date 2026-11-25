@@ -64,9 +64,7 @@ afterEach(() => {
 });
 
 function seed(toCells: (cells: ReturnType<typeof referenceRows>[number]) => unknown[]) {
-  google.userEdit(scope.spreadsheetId, (sheet) => {
-    sheet.push(...referenceRows().map(toCells));
-  });
+  google.seedExpenseRows(scope.spreadsheetId, referenceRows().map(toCells));
 }
 
 /** Reads of the ledger itself (the header check reads only A1:E2). */

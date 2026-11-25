@@ -1,17 +1,17 @@
 import type { AppSettings } from '@/db/appSettings';
 import type { SubmissionError } from '@/db/pendingSubmissions';
 import type { DataScope, SubmissionErrorCode } from '@/domain/expense';
-import { a1Range, inspectExpensesTab, PROBE_RANGE_COLUMNS } from '@/domain/sheetContract';
 import { AuthorizationError, type GoogleAuthorizer } from '@/google/authorization';
 import { getDriveFile, type DriveFile } from '@/google/drive';
 import { GoogleApiError, type FetchLike } from '@/google/http';
 import { fetchIdentity } from '@/google/identity';
 import { hasDriveFileAccess, REQUIRED_SCOPES } from '@/google/scopes';
 import { GoogleSession, ReconnectRequiredError } from '@/google/session';
-import { getTabs, getValues, type TabWithSize } from '@/google/sheets';
+
+import { YearTabChangedError } from './yearTabs';
 
 export type SheetAccess =
-  | { readonly kind: 'ready'; readonly session: GoogleSession; readonly tab: TabWithSize; readonly file: DriveFile }
+  | { readonly kind: 'ready'; readonly session: GoogleSession; readonly file: DriveFile }
   /** Needs the user (reconnect, fix the sheet). */
   | { readonly kind: 'blocked'; readonly error: SubmissionError }
   /** Temporary (offline, server, rate limit): try again later. */
@@ -33,6 +33,7 @@ export const err = (code: SubmissionErrorCode, httpStatus: number | null = null)
 /** Classifies an error raised while reading (never while writing). */
 export function accessFailure(error: unknown): SheetAccessFailure {
   if (error instanceof ReconnectRequiredError) return { kind: 'blocked', error: err('auth_required') };
+  if (error instanceof YearTabChangedError) return { kind: 'blocked', error: err('sheet_structure_changed') };
   if (error instanceof AuthorizationError) {
     return error.kind === 'network'
       ? { kind: 'retry_later', error: err('offline') }
@@ -60,8 +61,8 @@ export function accessFailure(error: unknown): SheetAccessFailure {
 
 /**
  * Opens the bound spreadsheet for reading or writing: authorizes silently,
- * checks the token belongs to the bound account, that the file is not
- * trashed, that the Expenses tab exists and that its header is intact.
+ * checks the token belongs to the bound account and that the file is not
+ * trashed. Yearly tabs are checked where they are used (yearTabs.ts).
  */
 export async function openSheetAccess(
   services: { readonly authorizer: GoogleAuthorizer; readonly fetch: FetchLike },
@@ -87,15 +88,7 @@ export async function openSheetAccess(
     const file = await getDriveFile(session, scope.spreadsheetId);
     if (file.trashed) return { kind: 'blocked', error: err('sheet_trashed') };
 
-    const tab = (await getTabs(session, scope.spreadsheetId)).find((t) => t.sheetId === settings.expensesSheetId);
-    if (tab === undefined) return { kind: 'blocked', error: err('sheet_structure_changed') };
-
-    // Validate the header so columns can never be misread or misaligned.
-    const probe = await getValues(session, scope.spreadsheetId, a1Range(tab.title, PROBE_RANGE_COLUMNS));
-    if (inspectExpensesTab(probe).kind !== 'ready') {
-      return { kind: 'blocked', error: err('sheet_structure_changed') };
-    }
-    return { kind: 'ready', session, tab, file };
+    return { kind: 'ready', session, file };
   } catch (error) {
     return accessFailure(error);
   }

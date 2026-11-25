@@ -17,10 +17,8 @@ export default function AccountScreen() {
 
   const openSheet = () => {
     if (bound?.spreadsheetId == null) return;
-    const gid = bound.expensesSheetId === null ? '' : `#gid=${bound.expensesSheetId}`;
-    void Linking.openURL(
-      `https://docs.google.com/spreadsheets/d/${encodeURIComponent(bound.spreadsheetId)}/edit${gid}`,
-    );
+    // Opens the spreadsheet itself: expenses are in its yearly tabs.
+    void Linking.openURL(`https://docs.google.com/spreadsheets/d/${encodeURIComponent(bound.spreadsheetId)}/edit`);
   };
 
   return (

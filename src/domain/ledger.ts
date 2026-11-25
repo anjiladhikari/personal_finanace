@@ -18,7 +18,9 @@ import { inspectSheetRow, type RowProblem } from './sheetRow';
 export type LedgerIssueKind = RowProblem | 'conflicting_duplicate' | 'duplicate_resolved';
 
 export interface LedgerIssue {
-  /** 1-based row number in the sheet. */
+  /** The yearly tab the row is in, e.g. "2026". */
+  readonly tab: string;
+  /** 1-based row number in that tab. */
   readonly rowNumber: number;
   readonly kind: LedgerIssueKind;
   readonly expenseId: string | null;
@@ -26,6 +28,7 @@ export interface LedgerIssue {
 
 export interface LedgerExpense extends ExpensePayload {
   readonly expenseId: string;
+  readonly tab: string;
   readonly rowNumber: number;
 }
 
@@ -38,6 +41,8 @@ export interface Ledger {
 }
 
 export interface SheetRowInput {
+  /** The yearly tab the row was read from ("2026"). */
+  readonly tab: string;
   readonly rowNumber: number;
   readonly cells: readonly unknown[];
 }
@@ -56,14 +61,20 @@ function sameValues(a: ExpensePayload, b: ExpensePayload): boolean {
   );
 }
 
-function byRowNumber(a: { readonly rowNumber: number }, b: { readonly rowNumber: number }): number {
+interface Located {
+  readonly tab: string;
+  readonly rowNumber: number;
+}
+
+function bySheetPosition(a: Located, b: Located): number {
+  if (a.tab !== b.tab) return a.tab < b.tab ? -1 : 1;
   return a.rowNumber - b.rowNumber;
 }
 
-/** Sorts by row number unless already in order (the usual case: rows arrive top to bottom). */
-function inRowOrder<T extends { readonly rowNumber: number }>(items: T[]): T[] {
+/** Sorts by tab, then row, unless already in order (the usual case: tabs and rows arrive in order). */
+function inRowOrder<T extends Located>(items: T[]): T[] {
   for (let i = 1; i < items.length; i += 1) {
-    if ((items[i - 1] as T).rowNumber > (items[i] as T).rowNumber) return items.sort(byRowNumber);
+    if (bySheetPosition(items[i - 1] as T, items[i] as T) > 0) return items.sort(bySheetPosition);
   }
   return items;
 }
@@ -85,7 +96,7 @@ export class LedgerBuilder {
 
   constructor(private readonly minorUnits: number) {}
 
-  add({ rowNumber, cells }: SheetRowInput): void {
+  add({ tab, rowNumber, cells }: SheetRowInput): void {
     const inspection = inspectSheetRow(cells, this.minorUnits);
     if (inspection.kind === 'empty') {
       this.emptyRows += 1;
@@ -93,10 +104,10 @@ export class LedgerBuilder {
     }
     if (inspection.kind === 'invalid') {
       if (inspection.expenseId !== null) this.idsInSheet.add(inspection.expenseId);
-      this.issues.push({ rowNumber, kind: inspection.problem, expenseId: inspection.expenseId });
+      this.issues.push({ tab, rowNumber, kind: inspection.problem, expenseId: inspection.expenseId });
       return;
     }
-    const expense: LedgerExpense = { ...inspection.expense, rowNumber };
+    const expense: LedgerExpense = { ...inspection.expense, tab, rowNumber };
     const { expenseId } = expense;
     this.idsInSheet.add(expenseId);
     if (!this.firstById.has(expenseId)) {
@@ -117,9 +128,9 @@ export class LedgerBuilder {
         expenses.push(first);
       } else if (later.every((row) => sameValues(row, first))) {
         expenses.push(first);
-        for (const row of later) issues.push({ rowNumber: row.rowNumber, kind: 'duplicate_resolved', expenseId });
+        for (const row of later) issues.push({ tab: row.tab, rowNumber: row.rowNumber, kind: 'duplicate_resolved', expenseId });
       } else {
-        for (const row of [first, ...later]) issues.push({ rowNumber: row.rowNumber, kind: 'conflicting_duplicate', expenseId });
+        for (const row of [first, ...later]) issues.push({ tab: row.tab, rowNumber: row.rowNumber, kind: 'conflicting_duplicate', expenseId });
       }
     });
     return { expenses: inRowOrder(expenses), issues: inRowOrder(issues), emptyRows: this.emptyRows, idsInSheet: this.idsInSheet };

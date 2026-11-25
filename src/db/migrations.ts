@@ -183,6 +183,40 @@ export const MIGRATIONS: readonly Migration[] = [
       `ALTER TABLE app_settings ADD COLUMN categories_merged_spreadsheet_id TEXT`,
     ],
   },
+  {
+    version: 6,
+    name: 'yearly_expense_tabs',
+    statements: [
+      // Expenses now live in one tab per year ("2026"), so a row reference
+      // needs its tab. Issues from the original Expenses tab are not kept.
+      `DROP TABLE IF EXISTS sheet_issues`,
+      `CREATE TABLE sheet_issues (
+        account_id TEXT NOT NULL CHECK (length(account_id) > 0),
+        spreadsheet_id TEXT NOT NULL CHECK (length(spreadsheet_id) > 0),
+        tab_title TEXT NOT NULL CHECK (length(tab_title) > 0),
+        row_number INTEGER NOT NULL CHECK (row_number >= 2),
+        kind TEXT NOT NULL CHECK (kind IN (
+          'missing_id', 'invalid_date', 'invalid_amount', 'missing_category',
+          'conflicting_duplicate', 'duplicate_resolved')),
+        expense_id TEXT,
+        PRIMARY KEY (account_id, spreadsheet_id, tab_title, row_number)
+      ) STRICT`,
+      // Yearly tabs that need sorting by date after an append. Recorded before
+      // the append and cleared once sorted, so a failed sort is retried later
+      // without sending the expense again.
+      `CREATE TABLE IF NOT EXISTS pending_tab_sorts (
+        spreadsheet_id TEXT NOT NULL CHECK (length(spreadsheet_id) > 0),
+        tab_title TEXT NOT NULL CHECK (length(tab_title) = 4),
+        PRIMARY KEY (spreadsheet_id, tab_title)
+      ) STRICT`,
+      // The confirmed cache was built from the original Expenses tab, which is
+      // no longer read. Clear it (it is only a copy of the sheet) and mark the
+      // history as not loaded, so the next visit to My spending loads the
+      // yearly tabs. Expenses waiting to be sent and custom categories stay.
+      `DELETE FROM confirmed_expenses`,
+      `UPDATE app_settings SET last_successful_sync_at = NULL WHERE id = 1`,
+    ],
+  },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;

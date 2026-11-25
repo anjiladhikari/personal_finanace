@@ -108,9 +108,9 @@ test('reports the last successful sync time and rows excluded by the last refres
   t.raw.prepare("UPDATE app_settings SET last_successful_sync_at = '2026-11-22T03:00:00.000Z' WHERE id = 1").run();
   t.raw
     .prepare(
-      `INSERT INTO sheet_issues (account_id, spreadsheet_id, row_number, kind, expense_id) VALUES
-       ('acct', 'sheet', 5, 'invalid_amount', 'x'), ('acct', 'sheet', 6, 'duplicate_resolved', 'y'),
-       ('other', 'sheet-2', 7, 'missing_id', NULL)`,
+      `INSERT INTO sheet_issues (account_id, spreadsheet_id, tab_title, row_number, kind, expense_id) VALUES
+       ('acct', 'sheet', '2026', 5, 'invalid_amount', 'x'), ('acct', 'sheet', '2026', 6, 'duplicate_resolved', 'y'),
+       ('other', 'sheet-2', '2026', 7, 'missing_id', NULL)`,
     )
     .run();
 
